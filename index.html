@@ -172,7 +172,7 @@
           <button id="btn-batch-stop" class="btn" disabled>中止</button>
           <span id="batch-status" class="status"></span>
         </div>
-        <p class="hint small">※ APIの利用料金はご自身のAPIキーに課金されます（目安: 仕様作成1回 ＋ 1件につき1回）。キーはこのブラウザからAPI提供元へ直接送信され、このサイトのサーバーには送られません。</p>
+        <p class="hint small">※ APIの利用料金はご自身のAPIキーに課金されます（目安: 仕様作成1回 ＋ 1件につき2回。見直しをオフにすると1回）。キーはこのブラウザからAPI提供元へ直接送信され、このサイトのサーバーには送られません。</p>
       </div>
       <div class="panel batch-results-panel" id="batch-main">
         <p class="hint">左で依頼を書いて「仕様を作成」を押すと、AIがセット全体のスタイルと各アイコンの解釈を提案します。確認・修正してから生成できます。</p>
@@ -214,6 +214,7 @@
       <label>APIキー
         <input id="ai-key" type="password" autocomplete="off" spellcheck="false">
       </label>
+      <label class="check"><input id="ai-review" type="checkbox" checked> 描いた案をAIに見直させる（精度が上がる代わりに、AI呼び出しが1件につき+1回）</label>
       <label class="check"><input id="ai-remember" type="checkbox"> このブラウザに保存する（共有PCでは使わないでください）</label>
       <p class="hint small">保存しない場合、キーはタブを閉じると消えます。キーはブラウザから各社APIへ直接送信されます。</p>
       <div class="row">

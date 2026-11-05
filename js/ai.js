@@ -38,7 +38,7 @@ const SETTINGS_KEY = 'pig.ai.settings';
 const SETTINGS_VERSION = 2;
 
 export function defaultSettings() {
-  return { v: SETTINGS_VERSION, provider: 'anthropic', model: PROVIDERS.anthropic.models[0].id, effort: 'medium', apiKey: '', remember: false };
+  return { v: SETTINGS_VERSION, provider: 'anthropic', model: PROVIDERS.anthropic.models[0].id, effort: 'medium', review: true, apiKey: '', remember: false };
 }
 
 export function loadSettings() {
@@ -184,10 +184,14 @@ Respond with JSON only:
   "notes": "short Japanese notes about the visual direction"
  },
  "items": [
-  {"name": "short Japanese name", "concept": "Japanese description of what to draw: the main motif, its key visual details, and any badge, e.g. 封筒（フラップが見える）＋右下に時計のバッジ", "keywords": ["english", "keywords", "for", "reference", "icons"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
+  {"name": "short Japanese name", "concept": "Japanese description of exactly what to draw and WHERE: every element with its count, pose/orientation and position on the canvas (e.g. 中央やや左に立っている人物1人（横向き・水辺を見ている）、足元に岸の線、その下（下3分の1）に波線2本。人物と波は重ねない), plus any badge", "keywords": ["english", "keywords", "for", "reference", "icons"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
  ]
 }
-Rules: items must have exactly one entry per request, in order. 3-8 keywords each (English, icon-library vocabulary). Honor the user's style preferences when given.`;
+Rules:
+- items must have exactly one entry per request, in order. 3-8 keywords each (English, icon-library vocabulary).
+- Think about what makes each request recognizable AND what distinguishes it from the other items in the set (e.g. number of people, posture, mood). Make those differences explicit and obvious in the concepts, and keep shared elements (e.g. the same water/shore treatment) identical across items.
+- Icons are tiny: prefer simple pictogram-style scenes with few, large elements over detailed illustrations.
+- Honor the user's style preferences when given.`;
 
 const VARIANTS_SYSTEM = `You are a skilled icon designer who draws SVG icons by hand. You design icons on a 100x100 canvas.
 
@@ -203,7 +207,9 @@ Background: {"shape":"none|${Object.keys(SHAPES).join('|')}","color":"#hex","col
 
 How to draw well:
 - Think about the request first: what must the viewer recognize instantly? Draw exactly that, with the few details that make it unambiguous.
-- Reference icons (24x24, with their SVG) are provided. Feel free to copy their paths into a draw layer and adapt them: scale them with transform="translate(tx ty) scale(k)" (k ≈ desired size / 24), modify or combine paths, remove parts, add details. Do not invent icon ids.
+- Plan the layout before writing SVG: decide where each element goes (coordinates) so that elements do NOT overlap unless intended. Never stack unrelated icons on top of each other.
+- Reference icons (24x24, with their SVG) are optional. For objects, you may copy their paths into a draw layer and adapt them: scale them with transform="translate(tx ty) scale(k)" (k ≈ desired size / 24), modify or combine paths, remove parts, add details. Do not invent icon ids.
+- Scenes with people or situations: draw your own simple pictogram people (like public signage): a solid circle head and a simple body (rounded torso, limbs as thick round-capped lines). Show the exact number of people requested, their posture (standing, sitting, arms raised...) and orientation (facing each other when talking). Put them on a ground/shore line; put environment elements (e.g. water as 2-3 wavy lines) beside or below them, not through them. Use size and spacing to convey mood (alone = one small figure with empty space; lively = several figures, raised arms, a few confetti/notes).
 - Line style (default): fill="none", stroke color, stroke-linecap="round", stroke-linejoin="round". Inside a transform with scale k, use stroke-width ≈ desired visual width / k. Visual line width in canvas units should be about (style strokeWidth × 2.2), e.g. strokeWidth 2 → ~4.5 units, consistently across the icon.
 - Keep the main motif within about 18..82 (with a background shape) or 8..92 (no background). Badges: about 26-34 units, in the requested corner, usually a filled accent circle with a small white glyph, separated from the motif by a ring in the background color (draw a slightly larger circle in the background color first).
 - Simple, bold, legible at 24px. Avoid tiny details and thin hairlines.
@@ -212,6 +218,41 @@ How to draw well:
 When asked for several variants, make them meaningfully different (different metaphor, viewpoint, composition or badge) — not just color changes.
 
 Respond with JSON only: {"variants":[{"name":"short Japanese name","idea":"one short Japanese sentence describing this variant","background":{...},"layers":[...]}]}`;
+
+const REVIEW_SYSTEM = `You are a strict icon art director reviewing drafts drawn as SVG on a 100x100 canvas.
+The attached image shows the drafts side by side, numbered 1, 2, 3... from left to right (each rendered as it would look as an icon).
+For EACH draft:
+1. "seen": in a few Japanese words, what a first-time viewer would actually recognize at small size (be honest, not what was intended).
+2. "problems": short Japanese list of problems against the request — e.g. wrong number of people, unclear posture, elements overlapping or stacked illegibly, parts cut off or touching the edge, too small/thin to read, poor contrast, looks like something else.
+3. Output a corrected design that fixes every problem. You may redraw substantially (rewrite the draw markup) — the goal is that the corrected icon clearly reads as the request. Keep each draft's distinct idea, and keep the style guide colors.
+The composition format is the same as the drafts' JSON (layers of type draw / icon / shape / text, canvas 0..100; for draw layers write markup in canvas coordinates with no x/y/size).
+Respond with JSON only: {"variants":[{"seen":"...","problems":"...","name":"...","idea":"...","background":{...},"layers":[...]}]} — same number and order as the drafts.`;
+
+/**
+ * 見直し（AI 1回）: 描いた案を画像で見せ、何に見えるか・問題点を挙げさせて修正版を出させる
+ * @param {string} sheetImage 案を横に並べたPNG（base64）
+ */
+export async function aiReview(settings, { request, concept = '', styleText = '', variants, sheetImage, signal }) {
+  let user = `Request: ${request}\n`;
+  if (concept && concept !== request) user += `Agreed interpretation: ${concept}\n`;
+  if (styleText) user += `${styleText}\n`;
+  user += `\nDrafts (${variants.length}), in the same order as in the image:\n`;
+  variants.forEach((v, i) => { user += `${i + 1}. ${JSON.stringify(compactComposition(v.comp))}\n`; });
+  const raw = extractJSON(await callLLM(settings, REVIEW_SYSTEM, user, signal, sheetImage));
+  const list = Array.isArray(raw.variants) ? raw.variants : [];
+  return variants.map((orig, i) => {
+    const v = list[i];
+    if (!v) return orig;
+    const { comp, warnings } = normalizeComposition(v, orig.comp.name);
+    if (!comp.layers.length) return orig;
+    return {
+      comp,
+      idea: String(v.idea || orig.idea || '').slice(0, 120),
+      review: [v.seen && `見え方: ${v.seen}`, v.problems && `直した点: ${v.problems}`].filter(Boolean).join(' / ').slice(0, 300),
+      warnings,
+    };
+  });
+}
 
 /** ローカル検索で参考アイコンを集める（AI呼び出しなし） */
 function referenceIcons(texts, extraIds = [], limit = 24) {
@@ -263,7 +304,7 @@ export async function aiPlan(settings, requests, prefs = '', signal) {
  * @returns {Promise<{variants: Array<{comp, idea, warnings}>}>}
  */
 export async function aiVariants(settings, p) {
-  const { request, concept = '', keywords = [], styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus } = p;
+  const { request, concept = '', keywords = [], styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus, makeSheet = null } = p;
   const baseIds = base ? base.layers.filter((l) => l.type === 'icon').map((l) => l.icon) : [];
   const refs = referenceIcons([request, concept, instruction, ...keywords], baseIds);
 
@@ -288,7 +329,23 @@ export async function aiVariants(settings, p) {
     if (comp.layers.length) variants.push({ comp, idea: String(v.idea || '').slice(0, 120), warnings });
   }
   if (!variants.length) throw new Error('AIが有効な案を返しませんでした');
-  return { variants };
+
+  // 見直し: 描いたものを画像でAIに見せて直させる（AIは描いている最中は結果を見られないため）
+  if (settings.review !== false && makeSheet) {
+    onStatus?.('AIが見直しています…');
+    try {
+      const sheetImage = await makeSheet(variants.map((v) => v.comp));
+      if (sheetImage) {
+        const reviewed = await aiReview(settings, { request, concept: [concept, instruction].filter(Boolean).join(' / '), styleText, variants, sheetImage, signal });
+        return { variants: reviewed, reviewed: true };
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      // 見直しに失敗しても最初の案は返す
+      return { variants, reviewed: false, reviewError: e.message };
+    }
+  }
+  return { variants, reviewed: false };
 }
 
 /** 並列数を制限して実行 */

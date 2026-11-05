@@ -894,6 +894,7 @@ function readAIForm() {
     provider,
     model: (sel === CUSTOM_MODEL ? $('#ai-model').value.trim() : sel) || PROVIDERS[provider].models[0].id,
     effort: $('#ai-effort').value,
+    review: $('#ai-review').checked,
     apiKey: $('#ai-key').value.trim(),
     remember: $('#ai-remember').checked,
   };
@@ -903,6 +904,7 @@ $('#btn-ai-settings').onclick = () => {
   $('#ai-provider').value = s.provider;
   fillModelList(s.provider, s.model);
   $('#ai-effort').value = s.effort || 'medium';
+  $('#ai-review').checked = s.review !== false;
   $('#ai-key').value = s.apiKey || '';
   $('#ai-remember').checked = !!s.remember;
   $('#ai-test-status').textContent = '';
@@ -936,6 +938,34 @@ $('#btn-ai-test').onclick = async () => {
 };
 
 // ------------------------------------------------------------------ AI assist (editor)
+/** 複数案を横に並べて番号を振った1枚のPNG（AIの見直し用、base64） */
+async function makeSheet(comps, cell = 256) {
+  try {
+    const gap = 16, top = 34;
+    const canvas = document.createElement('canvas');
+    canvas.width = comps.length * cell + (comps.length + 1) * gap;
+    canvas.height = cell + top + gap;
+    const ctx = canvas.getContext('2d');
+    // 白いアイコンも黒いアイコンも見えるよう中間のグレー背景
+    ctx.fillStyle = '#c9ced8';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < comps.length; i++) {
+      const x = gap + i * (cell + gap);
+      const blob = await svgToPNGBlob(exportSVG(comps[i], cell), cell);
+      const bmp = await createImageBitmap(blob);
+      ctx.drawImage(bmp, x, top, cell, cell);
+      ctx.fillStyle = '#111827';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(String(i + 1), x + 4, 24);
+    }
+    const out = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+    const buf = new Uint8Array(await out.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  } catch { return null; }
+}
+
 /** AIに見せるためのPNG（base64） */
 async function compToPNGBase64(comp, size = 384) {
   try {
@@ -951,7 +981,8 @@ let assistVariants = [];
 
 function variantThumbHTML(v, i, selectedIdx) {
   const cap = v.idea || v.comp.name;
-  return `<button type="button" class="vcard ${i === selectedIdx ? 'selected' : ''}" data-v="${i}" title="${escHTML(cap)}">
+  const tip = [cap, v.review].filter(Boolean).join('\n');
+  return `<button type="button" class="vcard ${i === selectedIdx ? 'selected' : ''}" data-v="${i}" title="${escHTML(tip)}">
     <span class="thumb">${renderSVG(v.comp)}</span><span class="cap">${escHTML(cap)}</span></button>`;
 }
 
@@ -959,8 +990,9 @@ function renderAssistVariants() {
   const el = $('#ai-variants');
   el.hidden = !assistVariants.length;
   const sel = assistVariants.findIndex((v) => v.active);
+  const note = assistVariants[sel]?.review;
   el.innerHTML = assistVariants.length
-    ? `<div class="hint">案をタップするとキャンバスに読み込みます</div><div class="variant-grid">${assistVariants.map((v, i) => variantThumbHTML(v, i, sel)).join('')}</div>`
+    ? `<div class="hint">案をタップするとキャンバスに読み込みます</div><div class="variant-grid">${assistVariants.map((v, i) => variantThumbHTML(v, i, sel)).join('')}</div>${note ? `<p class="review-note">${escHTML(note)}</p>` : ''}`
     : '';
 }
 
@@ -993,11 +1025,12 @@ async function runAssist(mode) {
   st.className = 'status';
   try {
     const base = mode === 'edit' ? clone(state.comp) : null;
-    const { variants } = await aiVariants(state.ai, {
+    const { variants, reviewed } = await aiVariants(state.ai, {
       request: mode === 'edit' ? (base.name || prompt) : prompt,
       instruction: mode === 'edit' ? prompt : '',
       base,
       baseImage: base ? await compToPNGBase64(base) : null,
+      makeSheet,
       count: +$('#ai-count').value,
       onStatus: (s) => { st.textContent = s; },
     });
@@ -1005,7 +1038,7 @@ async function runAssist(mode) {
     loadAssistVariant(0);
     const skipped = variants.reduce((a, v) => a + v.warnings.length, 0);
     st.className = 'status ok';
-    st.textContent = `${variants.length}案できました${variants.length > 1 ? '（下から選べます）' : ''}${skipped ? ` / ${skipped}件のパーツを除外` : ''}`;
+    st.textContent = `${variants.length}案できました${reviewed ? '（AI見直し済み）' : ''}${variants.length > 1 ? '。下から選べます' : ''}${skipped ? ` / ${skipped}件のパーツを除外` : ''}`;
   } catch (e) {
     st.className = 'status err';
     st.textContent = e.message;
@@ -1202,6 +1235,7 @@ function itemHTML(it, i) {
       ${status}
     </div>
     <div class="variant-grid">${it.variants.map((v, j) => variantThumbHTML(v, j, sel)).join('')}${placeholders}</div>
+    ${it.variants[sel]?.review ? `<p class="review-note">${escHTML(it.variants[sel].review)}</p>` : ''}
     <div class="ritem-actions">
       <input type="text" data-f="instruction" value="${escHTML(it.instruction || '')}" placeholder="派生・修正の指示（任意）例: 時計を砂時計に">
       <div class="row">
@@ -1281,6 +1315,7 @@ async function runItem(it, mode, signal) {
       styleText: styleTextFor(),
       base,
       baseImage: base ? await compToPNGBase64(base) : null,
+      makeSheet,
       instruction: mode === 'derive' ? (it.instruction || '').trim() : '',
       count: batch.count,
       signal,
@@ -1289,7 +1324,7 @@ async function runItem(it, mode, signal) {
     const vs = r.variants.map((v) => {
       const comp = batch.gf.unify ? applyStyleGuide(v.comp, guide) : v.comp;
       comp.name = it.name || comp.name;
-      return { comp, idea: v.idea };
+      return { comp, idea: v.idea, review: v.review };
     });
     if (mode === 'derive') {
       it.variants.push(...vs);
@@ -1392,7 +1427,7 @@ $('#batch-main').addEventListener('click', async (e) => {
   const card = e.target.closest('[data-v]');
   if (card) {
     it.selected = +card.dataset.v;
-    $$('.vcard', sec).forEach((c) => c.classList.toggle('selected', c === card));
+    renderItem(it);
     return;
   }
   const act = e.target.closest('[data-act]')?.dataset.act;
