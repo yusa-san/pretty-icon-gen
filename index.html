@@ -97,10 +97,14 @@
         </div>
         <textarea id="ai-prompt" rows="2" placeholder="例: 「雲に鍵のバッジをつけたセキュアなクラウド」/ 修正なら「バッジを左上にして赤に」"></textarea>
         <div class="row">
+          <label class="inline-label">案の数
+            <select id="ai-count"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+          </label>
           <button id="btn-ai-new" class="btn primary">AIで新規作成</button>
           <button id="btn-ai-edit" class="btn">今のアイコンをAIで修正</button>
           <span id="ai-assist-status" class="status"></span>
         </div>
+        <div id="ai-variants" class="variant-strip" hidden></div>
       </div>
     </main>
 
@@ -123,9 +127,14 @@
     <div class="batch-layout">
       <div class="panel batch-form">
         <h2>AIにまとめて発注</h2>
-        <p class="hint">1行に1アイコンずつ、欲しいアイコンを日本語で書いてください。AIが候補アイコンを検索して組み合わせます。</p>
-        <textarea id="batch-input" rows="10" placeholder="ユーザー追加&#10;安全なクラウド保存&#10;メールの予約送信&#10;AIチャットボット&#10;エコな配送トラック"></textarea>
-        <h3>共通スタイル</h3>
+        <ol class="steps" id="batch-steps">
+          <li data-step="input" class="active">依頼を書く</li>
+          <li data-step="plan">仕様を確認</li>
+          <li data-step="results">案を選ぶ</li>
+        </ol>
+        <p class="hint">1行に1アイコンずつ、欲しいアイコンを日本語で書いてください。</p>
+        <textarea id="batch-input" rows="8" placeholder="ユーザー追加&#10;安全なクラウド保存&#10;メールの予約送信&#10;AIチャットボット&#10;エコな配送トラック"></textarea>
+        <h3>スタイルの希望（任意）</h3>
         <div class="form-grid">
           <label>背景
             <select id="batch-bg">
@@ -141,6 +150,9 @@
               <option value="">おまかせ</option><option value="1.5">細め (1.5)</option><option value="2">標準 (2)</option><option value="2.5">太め (2.5)</option>
             </select>
           </label>
+          <label>1件あたりの案の数
+            <select id="batch-count"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
+          </label>
           <label>同時実行数
             <select id="batch-concurrency"><option>1</option><option>2</option><option selected>3</option><option>5</option></select>
           </label>
@@ -149,21 +161,17 @@
           <input id="batch-style" type="text" placeholder="例: パステル調、角丸背景、バッジは右下に統一">
         </label>
         <div class="row">
-          <button id="btn-batch-run" class="btn primary">一括生成</button>
+          <button id="btn-batch-plan" class="btn primary">仕様を作成（おすすめ）</button>
+          <button id="btn-batch-quick" class="btn" title="仕様の確認をとばして、すぐに案を生成します">確認なしで生成</button>
+        </div>
+        <div class="row">
           <button id="btn-batch-stop" class="btn" disabled>中止</button>
           <span id="batch-status" class="status"></span>
         </div>
-        <p class="hint small">※ APIの利用料金はご自身のAPIキーに課金されます。キーはこのブラウザからAPI提供元へ直接送信され、このサイトのサーバーには送られません。</p>
+        <p class="hint small">※ APIの利用料金はご自身のAPIキーに課金されます（目安: 仕様作成1回 ＋ 1件につき1回）。キーはこのブラウザからAPI提供元へ直接送信され、このサイトのサーバーには送られません。</p>
       </div>
-      <div class="panel batch-results-panel">
-        <div class="row space">
-          <h2>結果</h2>
-          <div class="row">
-            <button id="btn-batch-zip" class="btn" disabled>すべてZIP</button>
-            <button id="btn-batch-save" class="btn" disabled>すべてギャラリーへ</button>
-          </div>
-        </div>
-        <div id="batch-results" class="card-grid"><p class="hint">まだ結果はありません</p></div>
+      <div class="panel batch-results-panel" id="batch-main">
+        <p class="hint">左で依頼を書いて「仕様を作成」を押すと、AIがセット全体のスタイルと各アイコンの解釈を提案します。確認・修正してから生成できます。</p>
       </div>
     </div>
   </section>

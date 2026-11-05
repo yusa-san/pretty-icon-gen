@@ -270,3 +270,64 @@ dialog::backdrop { background: rgba(10, 12, 20, .45); }
   .btn { min-height: 36px; }
   .icon-btn { padding: 10px; }
 }
+
+/* ===== AIフロー: ステップ・仕様確認・複数案 ===== */
+.steps { display: flex; gap: 4px; list-style: none; margin: 0 0 4px; padding: 0; counter-reset: step; font-size: 12px; }
+.steps li {
+  flex: 1; text-align: center; padding: 6px 4px; border-radius: 8px; background: var(--bg); color: var(--muted);
+  counter-increment: step; white-space: nowrap;
+}
+.steps li::before { content: counter(step) '. '; }
+.steps li.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.steps li.done { background: var(--accent-soft); color: var(--accent); }
+.inline-label { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+
+.variant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.variant-strip { display: flex; flex-direction: column; gap: 6px; }
+.variant-strip .variant-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.vcard {
+  font: inherit; color: var(--text); background: var(--panel); border: 2px solid var(--border); border-radius: 10px;
+  padding: 6px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; text-align: left; min-width: 0;
+}
+.vcard:hover { border-color: var(--accent); }
+.vcard.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.vcard .thumb, .guide-preview .thumb {
+  aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  background-color: var(--checker);
+  background-image: linear-gradient(45deg, rgba(127,127,127,.08) 25%, transparent 25%, transparent 75%, rgba(127,127,127,.08) 75%),
+    linear-gradient(45deg, rgba(127,127,127,.08) 25%, transparent 25%, transparent 75%, rgba(127,127,127,.08) 75%);
+  background-size: 16px 16px; background-position: 0 0, 8px 8px;
+}
+.vcard .thumb svg, .guide-preview .thumb svg { width: 82%; height: 82%; }
+.vcard .cap { font-size: 11px; color: var(--muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vcard.placeholder { cursor: default; }
+.vcard.placeholder .thumb { animation: pulse 1.2s ease-in-out infinite; }
+
+.guide-box { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 8px; }
+.guide-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 6px 0; }
+.plan-items { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; counter-reset: item; }
+.plan-items li {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px;
+  counter-increment: item;
+}
+.plan-items label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.plan-req { font-size: 13px; font-weight: 600; }
+.plan-req::before { content: counter(item) '. '; color: var(--muted); }
+.plan-q { margin: 0; font-size: 12px; padding: 6px 8px; border-radius: 8px; background: #fef3c7; color: #92400e; }
+@media (prefers-color-scheme: dark) { .plan-q { background: #3b2f0b; color: #fcd34d; } }
+#batch-main > .row:last-child { margin-top: 12px; }
+
+.guide-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; margin: 6px 0; }
+.swatch.static { cursor: default; display: inline-block; vertical-align: middle; }
+.result-items { display: flex; flex-direction: column; gap: 12px; }
+.ritem { border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.ritem-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ritem-actions { display: flex; flex-direction: column; gap: 6px; }
+.ritem-actions input { width: 100%; }
+
+@media (max-width: 760px) {
+  .guide-box { grid-template-columns: minmax(0, 1fr); }
+  .variant-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  .ritem-actions .btn { min-height: 40px; flex: 1 1 40%; }
+  .steps li { font-size: 12px; }
+}
