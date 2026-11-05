@@ -77,7 +77,7 @@ async function readError(res) {
   return new Error(`APIエラー ${msg}`);
 }
 
-async function callAnthropic(s, system, user, signal, image) {
+async function callAnthropic(s, system, user, signal, image, schema) {
   const model = s.model || 'claude-haiku-5-5';
   const headers = {
     'content-type': 'application/json',
@@ -95,6 +95,8 @@ async function callAnthropic(s, system, user, signal, image) {
     output_config: { effort: EFFORTS[s.effort] ? s.effort : 'medium' },
     messages: [{ role: 'user', content }],
   };
+  // 構造化出力: 応答を必ず有効なJSONにする（SVGを含む長い文字列でもJSONが壊れない）
+  if (schema && !schemaUnsupported.has(model)) body.output_config.format = { type: 'json_schema', schema };
   // 安全分類器による拒否時に自動で別モデルへフォールバック（Opus/Sonnet/Fable系のみ対応）
   if (/^claude-(opus|sonnet|fable)-5/.test(model)) {
     headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
@@ -103,12 +105,22 @@ async function callAnthropic(s, system, user, signal, image) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST', headers, body: JSON.stringify(body), signal,
   });
-  if (!res.ok) throw await readError(res);
+  if (!res.ok) {
+    const err = await readError(res);
+    // スキーマが受け付けられない場合はスキーマ無しでやり直す（以後このモデルでは使わない）
+    if (res.status === 400 && body.output_config.format && /schema|format|output_config/i.test(err.message)) {
+      schemaUnsupported.add(model);
+      return callAnthropic(s, system, user, signal, image, null);
+    }
+    throw err;
+  }
   const j = await res.json();
   if (j.stop_reason === 'refusal') throw new Error('AIがこのリクエストを拒否しました。内容を変えて再度お試しください。');
   if (j.stop_reason === 'max_tokens') throw new Error('AIの出力が長すぎて途中で切れました。案の数を減らしてください。');
   return (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
 }
+
+const schemaUnsupported = new Set();
 
 async function callOpenAI(s, system, user, signal, image) {
   const content = image
@@ -150,19 +162,85 @@ async function callGemini(s, system, user, signal, image) {
 /**
  * @param {string} [image] 参考画像（PNGのbase64、data:なし）
  */
-export async function callLLM(settings, system, user, signal, image = null) {
+export async function callLLM(settings, system, user, signal, image = null, schema = null) {
   if (!hasKey(settings)) throw new Error('APIキーが設定されていません（右上の「AI設定」から入力してください）');
   const fn = { anthropic: callAnthropic, openai: callOpenAI, gemini: callGemini }[settings.provider];
   if (!fn) throw new Error(`未対応のプロバイダです: ${settings.provider}`);
-  return fn(settings, system, user, signal, image);
+  return fn(settings, system, user, signal, image, schema);
 }
 
 export function extractJSON(text) {
   const t = String(text).replace(/```(?:json)?/g, '');
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
   if (a < 0 || b <= a) throw new Error('AIの応答からJSONを読み取れませんでした');
-  return JSON.parse(t.slice(a, b + 1));
+  const body = t.slice(a, b + 1);
+  try {
+    return JSON.parse(body);
+  } catch (e) {
+    // よくある崩れ: "markup" の中のSVG属性のダブルクォートがエスケープされていない
+    const fixed = repairMarkupStrings(body);
+    if (fixed !== body) {
+      try { return JSON.parse(fixed); } catch { /* fall through */ }
+    }
+    throw e;
+  }
 }
+
+/** "markup":"<path d="..."/>" のような未エスケープのクォートをシングルクォートに直す */
+export function repairMarkupStrings(t) {
+  let out = '', i = 0;
+  const startRe = /"markup"\s*:\s*"/g;
+  // 文字列の終わり: 直後に , "key": か } が来るダブルクォート
+  const endRe = /"(?=\s*(?:,\s*"[A-Za-z_]+"\s*:|\}))/g;
+  let m;
+  while ((m = startRe.exec(t))) {
+    const start = m.index + m[0].length;
+    endRe.lastIndex = start;
+    const e = endRe.exec(t);
+    if (!e) break;
+    const inner = t.slice(start, e.index).replace(/\\"/g, "'").replace(/"/g, "'").replace(/[\r\n\t]+/g, ' ');
+    out += t.slice(i, start) + inner;
+    i = e.index;
+    startRe.lastIndex = e.index + 1;
+  }
+  return out + t.slice(i);
+}
+
+/** JSONで答えさせる。読めなければ一度だけエラーを伝えて再依頼する */
+async function askJSON(settings, system, user, { signal, image = null, schema = null } = {}) {
+  const text = await callLLM(settings, system, user, signal, image, schema);
+  try {
+    return extractJSON(text);
+  } catch (e) {
+    const retry = `${user}\n\nIMPORTANT: Your previous reply was not valid JSON (${e.message}). Reply again with valid JSON only. Inside markup strings use single quotes for SVG attributes, e.g. <path d='M10 10 L20 20' fill='none'/>.`;
+    return extractJSON(await callLLM(settings, system, retry, signal, image, schema));
+  }
+}
+
+// ---------- JSONスキーマ（Claudeの構造化出力用） ----------
+const STR = { type: 'string' };
+const NUM = { type: 'number' };
+const obj = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
+const BACKGROUND_SCHEMA = obj({ shape: STR, color: STR, color2: STR }, ['shape', 'color', 'color2']);
+const LAYER_SCHEMA = obj({
+  type: { type: 'string', enum: ['draw', 'icon', 'shape', 'text'] },
+  markup: STR, icon: STR, shape: STR, text: STR,
+  x: NUM, y: NUM, size: NUM, rotate: NUM,
+  color: STR, strokeWidth: NUM, outline: NUM, halo: NUM, haloColor: STR, weight: NUM,
+  flipX: { type: 'boolean' }, flipY: { type: 'boolean' },
+}, ['type']);
+const VARIANT_PROPS = { name: STR, idea: STR, background: BACKGROUND_SCHEMA, layers: { type: 'array', items: LAYER_SCHEMA } };
+const VARIANTS_SCHEMA = obj({ variants: { type: 'array', items: obj(VARIANT_PROPS, ['name', 'idea', 'background', 'layers']) } }, ['variants']);
+const REVIEW_SCHEMA = obj({
+  variants: { type: 'array', items: obj({ seen: STR, problems: STR, ...VARIANT_PROPS }, ['seen', 'problems', 'name', 'idea', 'background', 'layers']) },
+}, ['variants']);
+const PLAN_SCHEMA = obj({
+  styleGuide: obj({
+    background: BACKGROUND_SCHEMA, iconColor: STR, accentColor: STR, badgeIconColor: STR,
+    strokeWidth: NUM, badgePosition: { type: 'string', enum: ['br', 'bl', 'tr', 'tl', 'auto'] }, notes: STR,
+  }, ['background', 'iconColor', 'accentColor', 'badgeIconColor', 'strokeWidth', 'badgePosition', 'notes']),
+  items: { type: 'array', items: obj({ name: STR, concept: STR, keywords: { type: 'array', items: STR }, question: STR }, ['name', 'concept', 'keywords', 'question']) },
+}, ['styleGuide', 'items']);
 
 // ---------- プロンプト ----------
 
@@ -197,6 +275,7 @@ const VARIANTS_SYSTEM = `You are a skilled icon designer who draws SVG icons by 
 
 You produce a composition made of layers (drawn in array order, first = bottom):
 - {"type":"draw","markup":"<path .../><circle .../>"}  ← YOUR MAIN TOOL. Raw SVG elements drawn directly in canvas coordinates (0..100, origin top-left).
+  Write SVG attributes with SINGLE quotes inside markup (e.g. <path d='M10 10 L20 20' fill='none'/>) so the JSON string stays valid.
   Allowed elements: g, path, circle, ellipse, rect, line, polyline, polygon. Allowed attributes: geometry, fill, stroke, stroke-width, stroke-linecap, stroke-linejoin, fill-rule, opacity, transform. No gradients, filters, text, images or url(...).
   You may split the design into several draw layers (e.g. main motif, badge) so the user can move them separately.
 - {"type":"icon","icon":"<reference icon id>","x":50,"y":50,"size":60,"color":"#hex","strokeWidth":2,"halo":0,"haloColor":"#hex"}  Places a library icon as-is (x,y = center, size = box size; source is 24x24). Use only when a reference icon fits perfectly unchanged.
@@ -238,7 +317,7 @@ export async function aiReview(settings, { request, concept = '', styleText = ''
   if (styleText) user += `${styleText}\n`;
   user += `\nDrafts (${variants.length}), in the same order as in the image:\n`;
   variants.forEach((v, i) => { user += `${i + 1}. ${JSON.stringify(compactComposition(v.comp))}\n`; });
-  const raw = extractJSON(await callLLM(settings, REVIEW_SYSTEM, user, signal, sheetImage));
+  const raw = await askJSON(settings, REVIEW_SYSTEM, user, { signal, image: sheetImage, schema: REVIEW_SCHEMA });
   const list = Array.isArray(raw.variants) ? raw.variants : [];
   return variants.map((orig, i) => {
     const v = list[i];
@@ -276,7 +355,7 @@ const describeRef = (icon) => `${icon.id}${icon.style === 'fill' ? ' [filled]' :
 export async function aiPlan(settings, requests, prefs = '', signal) {
   let user = `Icon requests (${requests.length}):\n${requests.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n`;
   if (prefs) user += `\nStyle preferences from the user: ${prefs}\n`;
-  const raw = extractJSON(await callLLM(settings, PLAN_SYSTEM, user, signal));
+  const raw = await askJSON(settings, PLAN_SYSTEM, user, { signal, schema: PLAN_SCHEMA });
   const items = requests.map((request, i) => {
     const it = (Array.isArray(raw.items) ? raw.items[i] : null) || {};
     return {
@@ -321,7 +400,7 @@ export async function aiVariants(settings, p) {
   user += `\nCreate exactly ${count} variant${count > 1 ? 's' : ''}.\n`;
   if (refs.length) user += `\nReference icons (24x24 line icons unless [filled]; id (tags): svg):\n${refs.map(describeRef).join('\n')}`;
 
-  const raw = extractJSON(await callLLM(settings, VARIANTS_SYSTEM, user, signal, base ? baseImage : null));
+  const raw = await askJSON(settings, VARIANTS_SYSTEM, user, { signal, image: base ? baseImage : null, schema: VARIANTS_SCHEMA });
   const list = Array.isArray(raw.variants) ? raw.variants : [raw];
   const variants = [];
   for (const v of list.slice(0, count)) {
