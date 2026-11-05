@@ -64,7 +64,8 @@ export function applyStyleGuide(comp, g) {
   bg.size = bg.size || 100;
 
   const visible = c.layers.filter((l) => !l.hidden);
-  const icons = visible.filter((l) => l.type === 'icon');
+  // 描画レイヤー（AIが直接描いたもの）は色を持っているので再着色しない。位置と背景だけ揃える
+  const icons = visible.filter((l) => l.type === 'icon' || l.type === 'draw');
   if (!icons.length) return c;
   const main = icons.reduce((a, b) => (b.size > a.size ? b : a));
   const isStroke = (l) => getIcon(l.icon)?.style !== 'fill';
@@ -73,8 +74,10 @@ export function applyStyleGuide(comp, g) {
   const backing = visible.filter((l) => l.type === 'shape' && l.size >= main.size * 0.9);
   backing.forEach((l) => { l.color = g.background.color; });
 
-  main.color = g.iconColor;
-  if (isStroke(main)) main.strokeWidth = g.strokeWidth;
+  if (main.type === 'icon') {
+    main.color = g.iconColor;
+    if (isStroke(main)) main.strokeWidth = g.strokeWidth;
+  }
 
   const group = visible.filter((l) => l !== main && !backing.includes(l));
   const order = (l) => c.layers.indexOf(l);
@@ -82,6 +85,7 @@ export function applyStyleGuide(comp, g) {
     && Math.hypot(s.x - l.x, s.y - l.y) < s.size / 2);
   for (const l of group) {
     if (l.type === 'shape') l.color = g.accentColor;
+    else if (l.type === 'draw') continue;
     else if (l.type === 'icon') {
       // 小さいアイコンほど線を少し太くして見た目の太さを揃える
       if (isStroke(l)) l.strokeWidth = Math.round(g.strokeWidth * Math.min(1.6, Math.max(1, Math.sqrt(main.size / l.size))) * 4) / 4;

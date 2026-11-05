@@ -1,9 +1,9 @@
 import { store, loadIcons, searchIcons, getIcon, iconPreviewSVG } from './icons.js';
 import {
-  SHAPES, newComposition, newIconLayer, newShapeLayer, newTextLayer, renderSVG, layerMarkup,
+  SHAPES, newComposition, newIconLayer, newShapeLayer, newTextLayer, renderSVG, layerMarkup, sanitizeSVGMarkup,
   exportSVG, svgToPNGBlob, normalizeComposition, shapeElement, clone, uid,
 } from './compose.js';
-import { PROVIDERS, loadSettings, saveSettings, hasKey, aiVariants, aiPlan, runPool, callLLM } from './ai.js';
+import { PROVIDERS, EFFORTS, loadSettings, saveSettings, hasKey, modelLabel, aiVariants, aiPlan, runPool, callLLM } from './ai.js';
 import { BADGE_POSITIONS, normalizeGuide, describeGuide, applyStyleGuide } from './style.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -375,6 +375,7 @@ function duplicateLayer(id) {
 function layerLabel(l) {
   if (l.type === 'icon') return l.icon;
   if (l.type === 'shape') return `図形: ${SHAPES[l.shape] || l.shape}`;
+  if (l.type === 'draw') return '描画（SVG）';
   return `テキスト: ${l.text}`;
 }
 
@@ -526,6 +527,14 @@ function layerFields(l) {
       { k: 'color', label: '色', type: 'color' },
       ...(icon?.style === 'fill' ? [] : [{ k: 'strokeWidth', label: '線の太さ', type: 'range', min: 0.5, max: 4, step: 0.25 }]),
     ];
+  } else if (l.type === 'draw') {
+    specific = [
+      { k: '_code', type: 'html', html: `<details class="draw-code"><summary>SVGコードを編集</summary>
+        <textarea id="draw-markup" rows="6" spellcheck="false">${escHTML(l.markup)}</textarea>
+        <div class="row"><button type="button" class="btn small" id="btn-draw-apply">反映</button>
+        <span class="hint">0〜100の座標。path・circle・rect などが使えます</span></div></details>` },
+    ];
+    return [...specific, ...common.filter((f) => f.k !== 'halo' && f.k !== 'haloColor')].map((f) => ({ ...f, scope: 'layer' }));
   } else if (l.type === 'shape') {
     specific = [
       { k: 'shape', label: '形', type: 'select', options: SHAPES },
@@ -557,6 +566,18 @@ function renderLayerProps() {
     renderStage();
     if (commit) { renderLayerList(); record(); }
   });
+  const da = $('#btn-draw-apply', el);
+  if (da) {
+    da.onclick = () => {
+      const markup = sanitizeSVGMarkup($('#draw-markup', el).value);
+      if (!markup) return toast('SVGを読み取れませんでした（使える要素: g, path, circle, ellipse, rect, line, polyline, polygon）', true);
+      selected().markup = markup;
+      renderStage();
+      renderLayerList();
+      record();
+      toast('反映しました');
+    };
+  }
   const rb = $('#btn-replace', el);
   if (rb) {
     rb.onclick = () => {
@@ -825,27 +846,54 @@ $('#btn-license').onclick = () => {
   $('#dlg-license').showModal();
 };
 
+const CUSTOM_MODEL = '__custom__';
+const modelOptions = (provider, current, withCustom) => {
+  const models = PROVIDERS[provider]?.models || [];
+  let html = models.map((m) => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${m.label}</option>`).join('');
+  const known = models.some((m) => m.id === current);
+  if (!known && current && !withCustom) html += `<option value="${escHTML(current)}" selected>${escHTML(current)}</option>`;
+  if (withCustom) html += `<option value="${CUSTOM_MODEL}" ${known ? '' : 'selected'}>その他（モデルIDを入力）</option>`;
+  return html;
+};
+
 function updateAIIndicators() {
   const on = hasKey(state.ai);
   $('#ai-status-dot').classList.toggle('on', on);
   $('#ai-assist-hint').textContent = on
-    ? `${PROVIDERS[state.ai.provider]?.label || state.ai.provider} / ${state.ai.model}`
+    ? `${PROVIDERS[state.ai.provider]?.label || state.ai.provider} / ${modelLabel(state.ai)}`
     : 'AI設定でAPIキーを入れると使えます';
+  $$('.model-quick').forEach((sel) => { sel.innerHTML = modelOptions(state.ai.provider, state.ai.model, false); });
 }
+// 画面上のモデル選択（エディタ・一括発注）からの切り替え
+$$('.model-quick').forEach((sel) => sel.addEventListener('change', (e) => {
+  state.ai = { ...state.ai, model: e.target.value };
+  saveSettings(state.ai);
+  updateAIIndicators();
+  toast(`モデルを ${modelLabel(state.ai)} にしました`);
+}));
 
-function fillModelList(provider) {
-  $('#ai-model-list').innerHTML = (PROVIDERS[provider]?.models || []).map((m) => `<option value="${m}">`).join('');
+function fillModelList(provider, current) {
+  $('#ai-model-select').innerHTML = modelOptions(provider, current, true);
+  $('#ai-model').value = current || '';
+  $('#ai-model-custom').hidden = $('#ai-model-select').value !== CUSTOM_MODEL;
   $('#ai-key').placeholder = PROVIDERS[provider]?.keyHint || '';
+  $('#ai-effort').disabled = !PROVIDERS[provider]?.supportsEffort;
 }
 $('#ai-provider').innerHTML = Object.entries(PROVIDERS).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join('');
-$('#ai-provider').onchange = (e) => {
-  fillModelList(e.target.value);
-  $('#ai-model').value = PROVIDERS[e.target.value].models[0];
+$('#ai-effort').innerHTML = Object.entries(EFFORTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+$('#ai-provider').onchange = (e) => fillModelList(e.target.value, PROVIDERS[e.target.value].models[0].id);
+$('#ai-model-select').onchange = (e) => {
+  const custom = e.target.value === CUSTOM_MODEL;
+  $('#ai-model-custom').hidden = !custom;
+  if (custom) $('#ai-model').focus();
 };
 function readAIForm() {
+  const provider = $('#ai-provider').value;
+  const sel = $('#ai-model-select').value;
   return {
-    provider: $('#ai-provider').value,
-    model: $('#ai-model').value.trim() || PROVIDERS[$('#ai-provider').value].models[0],
+    provider,
+    model: (sel === CUSTOM_MODEL ? $('#ai-model').value.trim() : sel) || PROVIDERS[provider].models[0].id,
+    effort: $('#ai-effort').value,
     apiKey: $('#ai-key').value.trim(),
     remember: $('#ai-remember').checked,
   };
@@ -853,8 +901,8 @@ function readAIForm() {
 $('#btn-ai-settings').onclick = () => {
   const s = state.ai;
   $('#ai-provider').value = s.provider;
-  fillModelList(s.provider);
-  $('#ai-model').value = s.model;
+  fillModelList(s.provider, s.model);
+  $('#ai-effort').value = s.effort || 'medium';
   $('#ai-key').value = s.apiKey || '';
   $('#ai-remember').checked = !!s.remember;
   $('#ai-test-status').textContent = '';
@@ -888,6 +936,17 @@ $('#btn-ai-test').onclick = async () => {
 };
 
 // ------------------------------------------------------------------ AI assist (editor)
+/** AIに見せるためのPNG（base64） */
+async function compToPNGBase64(comp, size = 384) {
+  try {
+    const blob = await svgToPNGBlob(exportSVG(comp, size), size);
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  } catch { return null; }
+}
+
 let assistVariants = [];
 
 function variantThumbHTML(v, i, selectedIdx) {
@@ -938,6 +997,7 @@ async function runAssist(mode) {
       request: mode === 'edit' ? (base.name || prompt) : prompt,
       instruction: mode === 'edit' ? prompt : '',
       base,
+      baseImage: base ? await compToPNGBase64(base) : null,
       count: +$('#ai-count').value,
       onStatus: (s) => { st.textContent = s; },
     });
@@ -1089,7 +1149,7 @@ function renderPlanEditor(el) {
         ${it.question ? `<p class="plan-q">確認: ${escHTML(it.question)}</p>` : ''}
         <label>名前<input type="text" data-f="name" value="${escHTML(it.name)}" maxlength="40"></label>
         <label>内容（モチーフとバッジ）<textarea data-f="concept" rows="2" maxlength="200">${escHTML(it.concept)}</textarea></label>
-        <label>検索語（英語・カンマ区切り。空ならAIが考えます）<input type="text" data-f="keywords" value="${escHTML(it.keywords.join(', '))}"></label>
+        <label>参考アイコンの検索語（英語・カンマ区切り・任意）<input type="text" data-f="keywords" value="${escHTML(it.keywords.join(', '))}"></label>
       </li>`).join('')}
     </ol>
     <div class="row">
@@ -1220,12 +1280,12 @@ async function runItem(it, mode, signal) {
       keywords: it.keywords,
       styleText: styleTextFor(),
       base,
+      baseImage: base ? await compToPNGBase64(base) : null,
       instruction: mode === 'derive' ? (it.instruction || '').trim() : '',
       count: batch.count,
       signal,
       onStatus: (m) => { it.message = m; renderItemMessage(it); },
     });
-    if (!it.keywords.length) it.keywords = r.keywords;
     const vs = r.variants.map((v) => {
       const comp = batch.gf.unify ? applyStyleGuide(v.comp, guide) : v.comp;
       comp.name = it.name || comp.name;
@@ -1349,13 +1409,15 @@ $('#batch-main').addEventListener('click', async (e) => {
 async function init() {
   updateAIIndicators();
   $('#gallery-count').textContent = gallery.length;
-  renderGallery();
   try {
     await loadIcons();
   } catch (e) {
     $('#search-hint').textContent = e.message;
     return;
   }
+  // 保存済みの作品も検証・サニタイズしてから表示する
+  gallery = gallery.filter((g) => g && g.comp).map((g) => ({ ...g, comp: normalizeComposition(g.comp, g.comp.name).comp }));
+  renderGallery();
   const setNames = { lucide: 'Lucide', tabler: 'Tabler', 'tabler-filled': 'Tabler 塗り' };
   $('#set-filter').innerHTML = store.sets.map((s) =>
     `<label><input type="checkbox" value="${s.id}" checked> ${setNames[s.id] || s.name} <span class="hint">(${s.license})</span></label>`).join('');

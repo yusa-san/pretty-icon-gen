@@ -44,6 +44,109 @@ export function newShapeLayer(shape = 'circle', opts = {}) {
   };
 }
 
+/**
+ * 自由描画レイヤー: AIや手入力のSVG要素をそのまま持つ。
+ * markup は 0..100 のキャンバス座標で書かれ、レイヤーの x,y,size で移動・拡大縮小できる
+ * （x=50, y=50, size=100 のとき書かれた座標どおりに表示される）。
+ */
+export function newDrawLayer(markup, opts = {}) {
+  return {
+    id: uid(), type: 'draw', markup: sanitizeSVGMarkup(markup),
+    x: 50, y: 50, size: 100, rotate: 0, flipX: false, flipY: false, opacity: 1,
+    halo: 0, haloColor: '#ffffff', hidden: false,
+    ...opts,
+  };
+}
+
+// ---- SVGマークアップのサニタイズ（AIの出力や読み込んだJSONをそのままDOMに入れないため）
+const ALLOWED_EL = new Set(['g', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon']);
+const NUMERIC = /^[-+\d.eE%\s,]*$/;
+const ATTR_RULES = {
+  d: /^[MmLlHhVvCcSsQqTtAaZz\d.,\seE+-]*$/,
+  points: NUMERIC,
+  transform: /^(\s*(translate|scale|rotate|matrix|skewX|skewY)\(\s*[-+\d.eE,\s]*\)\s*,?)*\s*$/,
+  'stroke-linecap': /^(butt|round|square)$/,
+  'stroke-linejoin': /^(miter|round|bevel|arcs|miter-clip)$/,
+  'fill-rule': /^(nonzero|evenodd)$/,
+  'clip-rule': /^(nonzero|evenodd)$/,
+  'stroke-dasharray': /^(none|[-+\d.eE%\s,]*)$/,
+  fill: 'paint',
+  stroke: 'paint',
+};
+['cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'width', 'height', 'stroke-width',
+  'stroke-miterlimit', 'opacity', 'fill-opacity', 'stroke-opacity'].forEach((a) => { ATTR_RULES[a] = NUMERIC; });
+const SAFE_PAINT = /^(none|currentColor|transparent|#[0-9a-f]{3,8}|[a-z]{3,20}|rgba?\(\s*[\d.%\s,]+\))$/i;
+const MAX_MARKUP = 60000, MAX_ELEMENTS = 400;
+
+export function sanitizeSVGMarkup(markup) {
+  if (!markup || typeof DOMParser === 'undefined') return '';
+  const src = String(markup).slice(0, MAX_MARKUP * 2).replace(/<\?xml[^>]*>|<!DOCTYPE[^>]*>/gi, '');
+  // <svg> で包まれていれば中身だけを使う
+  const inner = /^\s*<svg[\s>]/i.test(src) ? src.replace(/^\s*<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '') : src;
+  const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${inner}</svg>`, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) return '';
+  let count = 0;
+  const walk = (el) => {
+    let out = '';
+    for (const child of el.children) {
+      const tag = child.localName;
+      if (!ALLOWED_EL.has(tag) || ++count > MAX_ELEMENTS) continue;
+      let attrs = '';
+      for (const { name, value } of [...child.attributes]) {
+        const rule = ATTR_RULES[name];
+        const v = value.trim();
+        if (!rule || v.length > 20000) continue;
+        if (rule === 'paint' ? !SAFE_PAINT.test(v) : !rule.test(v)) continue;
+        attrs += ` ${name}="${v.replace(/"/g, '')}"`;
+      }
+      const kids = tag === 'g' ? walk(child) : '';
+      out += tag === 'g' ? `<g${attrs}>${kids}</g>` : `<${tag}${attrs}/>`;
+    }
+    return out;
+  };
+  const out = walk(doc.documentElement);
+  return out.length > MAX_MARKUP ? '' : out;
+}
+
+let measureSvg = null;
+/** マークアップの実際の範囲（0..100座標）を測る。DOMが無い環境では null */
+export function measureMarkup(markup) {
+  if (typeof document === 'undefined' || !document.body) return null;
+  if (!measureSvg) {
+    measureSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    measureSvg.setAttribute('viewBox', '0 0 100 100');
+    measureSvg.setAttribute('aria-hidden', 'true');
+    measureSvg.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:100px;visibility:hidden;pointer-events:none';
+    document.body.appendChild(measureSvg);
+  }
+  measureSvg.innerHTML = `<g>${markup}</g>`;
+  try {
+    const b = measureSvg.firstChild.getBBox();
+    return b.width || b.height ? { x: b.x, y: b.y, w: b.width, h: b.height } : null;
+  } catch { return null; } finally { measureSvg.innerHTML = ''; }
+}
+
+/**
+ * 描画レイヤーの枠を中身にぴったり合わせる（見た目は変えずに x,y,size と markup の座標を付け替える）。
+ * これで選択枠・ドラッグ・拡大縮小が中身に対して自然に効く。
+ */
+export function fitDrawLayer(l) {
+  const b = measureMarkup(l.markup);
+  if (!b) return l;
+  // 線の太さ分の余白
+  const pad = 3;
+  const S = Math.max(b.w, b.h) + pad * 2;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  // 現在の見た目: p' = (l.x - l.size/2) + (l.size/100) * p
+  // 新しい枠 (cx', cy', S') で同じ見た目にするための内側変換を求める
+  const k0 = l.size / 100, ox0 = l.x - l.size / 2, oy0 = l.y - l.size / 2;
+  const nx = ox0 + k0 * cx, ny = oy0 + k0 * cy, nS = k0 * S;
+  const k = 100 / S, tx = -(cx - S / 2), ty = -(cy - S / 2);
+  l.markup = `<g transform="scale(${n(k)}) translate(${n(tx)} ${n(ty)})">${l.markup}</g>`;
+  l.x = n(nx); l.y = n(ny); l.size = n(nS);
+  return l;
+}
+
 export function newTextLayer(text = 'A', opts = {}) {
   return {
     id: uid(), type: 'text', text,
@@ -147,9 +250,15 @@ function textContent(l) {
   return out;
 }
 
+function drawContent(l) {
+  const s = l.size, k = s / 100;
+  return `<g transform="translate(${n(-s / 2)} ${n(-s / 2)}) scale(${n(k)})">${l.markup || ''}</g>`;
+}
+
 export function layerMarkup(l) {
   if (l.hidden) return '';
-  const content = l.type === 'icon' ? iconContent(l) : l.type === 'shape' ? shapeContent(l) : textContent(l);
+  const content = l.type === 'icon' ? iconContent(l) : l.type === 'shape' ? shapeContent(l)
+    : l.type === 'draw' ? drawContent(l) : textContent(l);
   const op = l.opacity != null && l.opacity < 1 ? ` opacity="${n(l.opacity)}"` : '';
   return `<g transform="${layerTransform(l)}"${op} data-layer="${l.id}">${content}</g>`;
 }
@@ -234,6 +343,15 @@ export function normalizeComposition(raw, fallbackName = 'アイコン') {
       comp.layers.push(newShapeLayer(SHAPES[l.shape] ? l.shape : 'circle', { ...common, color: color(l.color, '#ef4444'), outline: clamp(l.outline, 0, 30, 0) }));
     } else if (l.type === 'text' && l.text) {
       comp.layers.push(newTextLayer(String(l.text).slice(0, 12), { ...common, color: color(l.color, '#1f2937'), weight: clamp(l.weight, 100, 900, 700) }));
+    } else if (l.type === 'draw') {
+      const markup = sanitizeSVGMarkup(l.markup);
+      if (!markup) { warnings.push('描画レイヤーのSVGを読み取れませんでした'); continue; }
+      const layer = newDrawLayer(markup, {
+        ...common, size: clamp(l.size, 2, 200, 100), x: clamp(l.x, -20, 120, 50), y: clamp(l.y, -20, 120, 50), halo: 0,
+      });
+      // キャンバス全体サイズのまま（AIの出力の既定）なら中身に合わせる
+      if (layer.size === 100 && layer.x === 50 && layer.y === 50 && !layer.rotate) fitDrawLayer(layer);
+      comp.layers.push(layer);
     }
   }
   return { comp, warnings };

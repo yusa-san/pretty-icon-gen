@@ -24,6 +24,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body {
   font-family: 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic UI', system-ui, -apple-system, sans-serif;
@@ -331,3 +332,8 @@ dialog::backdrop { background: rgba(10, 12, 20, .45); }
   .ritem-actions .btn { min-height: 40px; flex: 1 1 40%; }
   .steps li { font-size: 12px; }
 }
+
+/* 描画レイヤーのコード編集 */
+.draw-code summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-bottom: 6px; }
+.draw-code textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.4; }
+.model-quick { max-width: 100%; }
