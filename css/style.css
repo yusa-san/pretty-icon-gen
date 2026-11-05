@@ -24,6 +24,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body {
   font-family: 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic UI', system-ui, -apple-system, sans-serif;
