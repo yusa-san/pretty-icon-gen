@@ -335,6 +335,8 @@ export function normalizeComposition(raw, fallbackName = 'アイコン') {
       rotate: clamp(l.rotate, -360, 360, 0), opacity: clamp(l.opacity, 0, 1, 1),
       flipX: !!l.flipX, flipY: !!l.flipY,
       halo: clamp(l.halo, 0, 20, 0), haloColor: color(l.haloColor, '#ffffff'),
+      // AIが付ける役割（スタイル統一で使う）: main / detail / badge
+      ...(['main', 'detail', 'badge'].includes(l.role) ? { role: l.role } : {}),
     };
     if (l.type === 'icon' || (!l.type && l.icon)) {
       if (!getIcon(l.icon)) { warnings.push(`不明なアイコン: ${l.icon}`); continue; }

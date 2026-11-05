@@ -67,36 +67,49 @@ export function applyStyleGuide(comp, g) {
   // 描画レイヤー（AIが直接描いたもの）は色を持っているので再着色しない。位置と背景だけ揃える
   const icons = visible.filter((l) => l.type === 'icon' || l.type === 'draw');
   if (!icons.length) return c;
-  const main = icons.reduce((a, b) => (b.size > a.size ? b : a));
   const isStroke = (l) => getIcon(l.icon)?.style !== 'fill';
+  const order = (l) => c.layers.indexOf(l);
+  const hasRoles = visible.some((l) => l.role);
 
-  // メインと同程度以上の大きさの図形は「土台」扱い（背景の代わり）
-  const backing = visible.filter((l) => l.type === 'shape' && l.size >= main.size * 0.9);
+  let main, backing, badges, others;
+  if (hasRoles) {
+    // AIが役割を付けている場合はそれに従う（情景の部品を「バッジ」と誤判定して動かさない）
+    main = icons.find((l) => l.role === 'main') || icons.reduce((a, b) => (b.size > a.size ? b : a));
+    backing = visible.filter((l) => l.type === 'shape' && l.role !== 'badge' && l.size >= 90);
+    badges = visible.filter((l) => l.role === 'badge');
+    others = visible.filter((l) => !backing.includes(l) && !badges.includes(l));
+  } else {
+    main = icons.reduce((a, b) => (b.size > a.size ? b : a));
+    // メインと同程度以上の大きさの図形は「土台」扱い（背景の代わり）
+    backing = visible.filter((l) => l.type === 'shape' && l.size >= main.size * 0.9);
+    const rest = visible.filter((l) => l !== main && !backing.includes(l));
+    badges = rest.filter((l) => l.size < main.size * 0.75);
+    others = [main, ...rest.filter((l) => !badges.includes(l))];
+  }
   backing.forEach((l) => { l.color = g.background.color; });
 
-  if (main.type === 'icon') {
-    main.color = g.iconColor;
-    if (isStroke(main)) main.strokeWidth = g.strokeWidth;
+  // メイン・情景の部品: アイコンはメインの色に。
+  // 役割付き（アイコンと手描きの混在）のときは、AIが手描きの線と合わせた線の太さを変えない
+  for (const l of others) {
+    if (l.type !== 'icon') continue;
+    l.color = g.iconColor;
+    if (!hasRoles && isStroke(l)) l.strokeWidth = g.strokeWidth;
   }
 
-  const group = visible.filter((l) => l !== main && !backing.includes(l));
-  const order = (l) => c.layers.indexOf(l);
-  const onAccentShape = (l) => group.some((s) => s.type === 'shape' && order(s) < order(l)
+  // バッジ: アクセント色。小さいアイコンほど線を少し太くして見た目の太さを揃える
+  const onAccentShape = (l) => badges.some((s) => s.type === 'shape' && order(s) < order(l)
     && Math.hypot(s.x - l.x, s.y - l.y) < s.size / 2);
-  for (const l of group) {
+  for (const l of badges) {
     if (l.type === 'shape') l.color = g.accentColor;
-    else if (l.type === 'draw') continue;
     else if (l.type === 'icon') {
-      // 小さいアイコンほど線を少し太くして見た目の太さを揃える
       if (isStroke(l)) l.strokeWidth = Math.round(g.strokeWidth * Math.min(1.6, Math.max(1, Math.sqrt(main.size / l.size))) * 4) / 4;
-      l.color = onAccentShape(l) ? g.badgeIconColor : (l.size >= main.size * 0.7 ? g.iconColor : g.accentColor);
+      l.color = onAccentShape(l) ? g.badgeIconColor : g.accentColor;
     } else if (l.type === 'text') {
       l.color = onAccentShape(l) ? g.badgeIconColor : g.accentColor;
     }
   }
 
-  // バッジ位置: メインより小さいパーツ群をまとめて指定の角へ
-  const badges = group.filter((l) => l.size < main.size * 0.75);
+  // バッジ位置: バッジ群をまとめて指定の角へ
   if (BADGE_TARGET[g.badgePosition] && badges.length) {
     const minX = Math.min(...badges.map((l) => l.x - l.size / 2)), maxX = Math.max(...badges.map((l) => l.x + l.size / 2));
     const minY = Math.min(...badges.map((l) => l.y - l.size / 2)), maxY = Math.max(...badges.map((l) => l.y + l.size / 2));

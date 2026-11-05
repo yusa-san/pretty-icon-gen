@@ -109,5 +109,13 @@ export const JA_DICT = {
   'ニュース': ['news', 'newspaper'], '新聞': ['newspaper', 'news'], '放送': ['broadcast', 'antenna', 'radio'], 'ラジオ': ['radio'],
   'ユーザー追加': ['user-plus'], 'プロフィール': ['user', 'id', 'profile'], '身分証': ['id', 'id-badge', 'badge'], 'バッジ': ['badge', 'award'],
   '組織': ['sitemap', 'hierarchy', 'building'], 'ネットワーク': ['network', 'share', 'sitemap'], '接続': ['plug', 'link', 'plug-connected'],
-  'ダッシュボード': ['dashboard', 'layout-dashboard', 'gauge'], 'ホームページ': ['home', 'world', 'browser'], '自宅': ['home', 'house'],
+  'ダッシュボード': ['dashboard', 'layout-dashboard', 'gauge'],
+  // 家具・情景
+  '椅子': ['chair', 'armchair'], 'いす': ['chair', 'armchair'], 'イス': ['chair', 'armchair'], 'ベンチ': ['bench', 'armchair', 'sofa'],
+  'ソファ': ['sofa'], 'ソファー': ['sofa'], '机': ['desk', 'table'], 'テーブル': ['table'], '座る': ['armchair', 'chair', 'sofa'],
+  '立つ': ['person-standing', 'user'], '歩く': ['walk', 'footprints'], '走る': ['run', 'running'], '泳ぐ': ['swimming', 'waves'],
+  '水辺': ['waves', 'droplet'], '川': ['waves', 'ripple'], '湖': ['waves', 'ripple'], '岸': ['waves'], '池': ['ripple', 'droplet'],
+  'パーティ': ['confetti', 'party-popper', 'balloon'], 'パーティー': ['confetti', 'party-popper', 'balloon'], '紙吹雪': ['confetti'],
+  'お祝い': ['confetti', 'party-popper', 'gift'], '風船': ['balloon'], '乾杯': ['glass', 'beer'], '話す': ['message', 'speech', 'messages'],
+  '静か': ['volume-off', 'moon'], '賑やか': ['confetti', 'music', 'speakerphone'], '佇む': ['person-standing'], '人物': ['user', 'person-standing'], 'ホームページ': ['home', 'world', 'browser'], '自宅': ['home', 'house'],
 };
