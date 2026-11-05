@@ -95,8 +95,9 @@
           <strong>AIアシスト</strong>
           <span class="hint" id="ai-assist-hint">AI設定でAPIキーを入れると使えます</span>
         </div>
-        <textarea id="ai-prompt" rows="2" placeholder="例: 「雲に鍵のバッジをつけたセキュアなクラウド」/ 修正なら「バッジを左上にして赤に」"></textarea>
+        <textarea id="ai-prompt" rows="2" placeholder="例: 「雲に鍵のバッジをつけたセキュアなクラウド」/ 修正なら「雲をもっとふわふわに、鍵を左上へ」"></textarea>
         <div class="row">
+          <label class="inline-label">モデル <select class="model-quick" aria-label="AIモデル"></select></label>
           <label class="inline-label">案の数
             <select id="ai-count"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
           </label>
@@ -160,6 +161,9 @@
         <label class="block">追加のスタイル指示（任意）
           <input id="batch-style" type="text" placeholder="例: パステル調、角丸背景、バッジは右下に統一">
         </label>
+        <label class="block">AIモデル
+          <select class="model-quick" aria-label="AIモデル"></select>
+        </label>
         <div class="row">
           <button id="btn-batch-plan" class="btn primary">仕様を作成（おすすめ）</button>
           <button id="btn-batch-quick" class="btn" title="仕様の確認をとばして、すぐに案を生成します">確認なしで生成</button>
@@ -199,8 +203,13 @@
         <select id="ai-provider"></select>
       </label>
       <label>モデル
-        <input id="ai-model" list="ai-model-list" type="text">
-        <datalist id="ai-model-list"></datalist>
+        <select id="ai-model-select"></select>
+      </label>
+      <label id="ai-model-custom" hidden>モデルID（手入力）
+        <input id="ai-model" type="text" spellcheck="false">
+      </label>
+      <label>考える深さ <span class="hint">（Claudeのみ。深いほど賢いが遅く・高くなります）</span>
+        <select id="ai-effort"></select>
       </label>
       <label>APIキー
         <input id="ai-key" type="password" autocomplete="off" spellcheck="false">
