@@ -112,10 +112,12 @@ export const JA_DICT = {
   'ダッシュボード': ['dashboard', 'layout-dashboard', 'gauge'],
   // 家具・情景
   '椅子': ['chair', 'armchair'], 'いす': ['chair', 'armchair'], 'イス': ['chair', 'armchair'], 'ベンチ': ['bench', 'armchair', 'sofa'],
-  'ソファ': ['sofa'], 'ソファー': ['sofa'], '机': ['desk', 'table'], 'テーブル': ['table'], '座る': ['armchair', 'chair', 'sofa'],
-  '立つ': ['person-standing', 'user'], '歩く': ['walk', 'footprints'], '走る': ['run', 'running'], '泳ぐ': ['swimming', 'waves'],
-  '水辺': ['waves', 'droplet'], '川': ['waves', 'ripple'], '湖': ['waves', 'ripple'], '岸': ['waves'], '池': ['ripple', 'droplet'],
+  'ソファ': ['sofa'], 'ソファー': ['sofa'], '机': ['desk', 'table'], 'テーブル': ['table'], '座る': ['sitting', 'armchair', 'chair'],
+  '立つ': ['standing', 'person-standing'], '歩く': ['walking', 'walk'], '走る': ['running', 'run'], '泳ぐ': ['swimming', 'waters'],
+  '踊る': ['dancing', 'dance'], 'ダンス': ['dancing'], '群衆': ['crowd'], '桟橋': ['pier'], '釣り': ['fishing'], 'ブランコ': ['swing'],
+  'キャンプ': ['campsite', 'tent'], 'テント': ['tent', 'campsite'], '公園': ['park', 'bench', 'tree'], 'ハイキング': ['hiking'],
+  '水辺': ['waters', 'shore', 'waves'], '川': ['waters', 'river', 'waves'], '湖': ['lake', 'waters'], '岸': ['shore'], '池': ['ripple', 'droplet'],
   'パーティ': ['confetti', 'party-popper', 'balloon'], 'パーティー': ['confetti', 'party-popper', 'balloon'], '紙吹雪': ['confetti'],
   'お祝い': ['confetti', 'party-popper', 'gift'], '風船': ['balloon'], '乾杯': ['glass', 'beer'], '話す': ['message', 'speech', 'messages'],
-  '静か': ['volume-off', 'moon'], '賑やか': ['confetti', 'music', 'speakerphone'], '佇む': ['person-standing'], '人物': ['user', 'person-standing'], 'ホームページ': ['home', 'world', 'browser'], '自宅': ['home', 'house'],
+  '静か': ['volume-off', 'moon'], '賑やか': ['confetti', 'dancing', 'music'], '佇む': ['standing', 'sitting'], 'ホームページ': ['home', 'world', 'browser'], '自宅': ['home', 'house'],
 };

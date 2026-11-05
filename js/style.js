@@ -3,6 +3,8 @@ import { SHAPES, clone } from './compose.js';
 import { getIcon } from './icons.js';
 
 export const BADGE_POSITIONS = { auto: 'おまかせ', br: '右下', bl: '左下', tr: '右上', tl: '左上' };
+// 絵柄の系統: 線のアイコン（Lucide / Tabler）か、塗りのピクトグラム（Pinhead / Material Symbols / Tabler 塗り）か
+export const FAMILIES = { auto: 'おまかせ', line: '線のアイコン', solid: '塗りのピクトグラム' };
 
 const color = (v, d) => (typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v.trim()) ? v.trim() : d);
 const num = (v, lo, hi, d) => { const x = Number(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
@@ -15,6 +17,7 @@ export function defaultGuide() {
     badgeIconColor: '#ffffff',
     strokeWidth: 2,
     badgePosition: 'br',
+    family: 'auto',
     notes: '',
   };
 }
@@ -32,6 +35,7 @@ export function normalizeGuide(raw) {
     badgeIconColor: color(raw?.badgeIconColor, d.badgeIconColor),
     strokeWidth: num(raw?.strokeWidth, 1, 3.5, d.strokeWidth),
     badgePosition: BADGE_POSITIONS[raw?.badgePosition] ? raw.badgePosition : 'auto',
+    family: FAMILIES[raw?.family] ? raw.family : 'auto',
     notes: String(raw?.notes || '').slice(0, 300),
   };
 }
@@ -42,9 +46,15 @@ export function describeGuide(g) {
 - background: shape "${g.background.shape}", color ${g.background.color}${g.background.color2 ? ` → gradient to ${g.background.color2}` : ''}
 - main icon color: ${g.iconColor}; accent color (badges, modifier shapes): ${g.accentColor}; icon/text color on top of accent shapes: ${g.badgeIconColor}
 - strokeWidth for line icons: ${g.strokeWidth}
-- badge/modifier position: ${g.badgePosition === 'auto' ? 'your choice' : { br: 'bottom-right', bl: 'bottom-left', tr: 'top-right', tl: 'top-left' }[g.badgePosition]}${g.notes ? `\n- notes: ${g.notes}` : ''}`;
+- badge/modifier position: ${g.badgePosition === 'auto' ? 'your choice' : { br: 'bottom-right', bl: 'bottom-left', tr: 'top-right', tl: 'top-left' }[g.badgePosition]}
+- icon family: ${FAMILY_TEXT[g.family]}${g.notes ? `\n- notes: ${g.notes}` : ''}`;
 }
 
+export const FAMILY_TEXT = {
+  auto: 'choose ONE family per icon set (line icons, or solid pictograms) and do not mix them within an icon',
+  line: 'LINE icons only (Lucide / Tabler outline). Hand-drawn parts must also be strokes with the same visual line width',
+  solid: 'SOLID filled pictograms only (Pinhead / Material Symbols / Tabler Filled). Hand-drawn parts must be filled shapes or thick strokes (about size × 0.08) matching the pictogram limbs',
+};
 const BADGE_TARGET = { br: [71, 71], bl: [29, 71], tr: [71, 29], tl: [29, 29] };
 
 /**

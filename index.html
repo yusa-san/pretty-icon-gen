@@ -98,6 +98,9 @@
         <textarea id="ai-prompt" rows="2" placeholder="例: 「雲に鍵のバッジをつけたセキュアなクラウド」/ 修正なら「雲をもっとふわふわに、鍵を左上へ」"></textarea>
         <div class="row">
           <label class="inline-label">モデル <select class="model-quick" aria-label="AIモデル"></select></label>
+          <label class="inline-label">絵柄
+            <select id="ai-family"><option value="auto">おまかせ</option><option value="line">線</option><option value="solid">塗り（ピクトグラム）</option></select>
+          </label>
           <label class="inline-label">案の数
             <select id="ai-count"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>
           </label>
@@ -150,6 +153,9 @@
             <select id="batch-stroke">
               <option value="">おまかせ</option><option value="1.5">細め (1.5)</option><option value="2">標準 (2)</option><option value="2.5">太め (2.5)</option>
             </select>
+          </label>
+          <label>絵柄
+            <select id="batch-family"><option value="auto">おまかせ</option><option value="line">線のアイコン</option><option value="solid">塗りのピクトグラム（人物・情景向き）</option></select>
           </label>
           <label>1件あたりの案の数
             <select id="batch-count"><option>1</option><option>2</option><option selected>3</option><option>4</option></select>

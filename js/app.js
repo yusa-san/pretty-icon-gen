@@ -4,7 +4,7 @@ import {
   exportSVG, svgToPNGBlob, normalizeComposition, shapeElement, clone, uid,
 } from './compose.js';
 import { PROVIDERS, EFFORTS, loadSettings, saveSettings, hasKey, modelLabel, aiVariants, aiPlan, runPool, callLLM } from './ai.js';
-import { BADGE_POSITIONS, normalizeGuide, describeGuide, applyStyleGuide } from './style.js';
+import { BADGE_POSITIONS, FAMILIES, normalizeGuide, describeGuide, applyStyleGuide } from './style.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1032,6 +1032,7 @@ async function runAssist(mode) {
       baseImage: base ? await compToPNGBase64(base) : null,
       makeSheet,
       count: +$('#ai-count').value,
+      family: $('#ai-family').value,
       onStatus: (s) => { st.textContent = s; },
     });
     assistVariants = variants.map((v) => ({ ...v, mode, keepName: mode === 'edit' ? base.name : null, active: false }));
@@ -1063,23 +1064,33 @@ const batch = {
 $('#batch-bg').insertAdjacentHTML('beforeend', Object.entries(SHAPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join(''));
 
 // アイコンデータ読み込み後に組み立てる（先に作ると未知のアイコンとして除外されるため）
-const SAMPLE_DEFS = [
-  { layers: [{ type: 'icon', icon: 'lucide:mail', x: 46, y: 46, size: 52 }, { type: 'shape', shape: 'circle', x: 70, y: 70, size: 30, halo: 3 }, { type: 'icon', icon: 'lucide:clock', x: 70, y: 70, size: 18 }] },
-  { layers: [{ type: 'icon', icon: 'lucide:cloud', x: 46, y: 47, size: 54 }, { type: 'icon', icon: 'lucide:lock', x: 70, y: 70, size: 28, halo: 4 }] },
-  { layers: [{ type: 'icon', icon: 'lucide:user', x: 50, y: 50, size: 56 }] },
-];
-let sampleComps = null;
-const getSampleComps = () => (sampleComps ||= SAMPLE_DEFS.map((c) => normalizeComposition(c).comp));
+const SAMPLE_DEFS = {
+  line: [
+    { layers: [{ type: 'icon', icon: 'lucide:mail', x: 46, y: 46, size: 52 }, { type: 'shape', shape: 'circle', x: 70, y: 70, size: 30, halo: 3 }, { type: 'icon', icon: 'lucide:clock', x: 70, y: 70, size: 18 }] },
+    { layers: [{ type: 'icon', icon: 'lucide:cloud', x: 46, y: 47, size: 54 }, { type: 'icon', icon: 'lucide:lock', x: 70, y: 70, size: 28, halo: 4 }] },
+    { layers: [{ type: 'icon', icon: 'lucide:user', x: 50, y: 50, size: 56 }] },
+  ],
+  solid: [
+    { layers: [{ type: 'icon', icon: 'pinhead:person-sitting-on-bench-with-armrests-and-backrest', x: 50, y: 48, size: 60 }] },
+    { layers: [{ type: 'icon', icon: 'pinhead:crowd-of-people', x: 46, y: 46, size: 52 }, { type: 'shape', shape: 'circle', x: 70, y: 70, size: 30, halo: 3, role: 'badge' }, { type: 'icon', icon: 'material-symbols:chat', x: 70, y: 70, size: 18, role: 'badge' }] },
+    { layers: [{ type: 'icon', icon: 'pinhead:person-dancing-with-sparkles', x: 50, y: 50, size: 58 }] },
+  ],
+};
+const sampleComps = {};
+const getSampleComps = (family) => {
+  const f = family === 'solid' ? 'solid' : 'line';
+  return (sampleComps[f] ||= SAMPLE_DEFS[f].map((c) => normalizeComposition(c).comp));
+};
 
 const fromGuide = (g, unify = true) => ({
   shape: g.background.shape, bgColor: g.background.color, useGrad: !!g.background.color2, color2: g.background.color2 || '#ec4899',
   iconColor: g.iconColor, accentColor: g.accentColor, badgeIconColor: g.badgeIconColor,
-  strokeWidth: g.strokeWidth, badgePosition: g.badgePosition, notes: g.notes, unify,
+  strokeWidth: g.strokeWidth, badgePosition: g.badgePosition, family: g.family || 'auto', notes: g.notes, unify,
 });
 const toGuide = (f) => normalizeGuide({
   background: { shape: f.shape, color: f.bgColor, color2: f.useGrad ? f.color2 : '' },
   iconColor: f.iconColor, accentColor: f.accentColor, badgeIconColor: f.badgeIconColor,
-  strokeWidth: f.strokeWidth, badgePosition: f.badgePosition, notes: f.notes,
+  strokeWidth: f.strokeWidth, badgePosition: f.badgePosition, family: f.family, notes: f.notes,
 });
 
 function batchPrefs() {
@@ -1090,6 +1101,8 @@ function batchPrefs() {
   if ($('#batch-use-color').checked) parts.push(`main color ${$('#batch-color').value}`);
   const sw = $('#batch-stroke').value;
   if (sw) parts.push(`strokeWidth ${sw}`);
+  const fam = $('#batch-family').value;
+  if (fam !== 'auto') parts.push(`icon family "${fam}"`);
   const extra = $('#batch-style').value.trim();
   if (extra) parts.push(extra);
   return parts.join('; ');
@@ -1104,6 +1117,7 @@ function applyPrefsToGuide(g) {
     else g.background.color = $('#batch-color').value;
   }
   if ($('#batch-stroke').value) g.strokeWidth = +$('#batch-stroke').value;
+  if ($('#batch-family').value !== 'auto') g.family = $('#batch-family').value;
   if (g.background.shape === 'none' && g.iconColor.toLowerCase() === '#ffffff') g.iconColor = '#1f2937';
   return normalizeGuide(g);
 }
@@ -1150,6 +1164,7 @@ const GUIDE_FIELDS = [
   { k: 'accentColor', label: 'アクセント色', type: 'color' },
   { k: 'badgeIconColor', label: 'バッジ上の色', type: 'color' },
   { k: 'strokeWidth', label: '線の太さ', type: 'range', min: 1, max: 3.5, step: 0.25 },
+  { k: 'family', label: '絵柄', type: 'select', options: FAMILIES },
   { k: 'badgePosition', label: 'バッジ位置', type: 'select', options: BADGE_POSITIONS },
   { k: 'notes', label: 'メモ', type: 'text', max: 300 },
   { k: 'unify', label: '自動で揃える', type: 'check' },
@@ -1159,7 +1174,7 @@ function renderGuidePreview() {
   const box = $('#guide-preview');
   if (!box || !batch.gf) return;
   const g = toGuide(batch.gf);
-  box.innerHTML = getSampleComps().map((c) => `<span class="thumb">${renderSVG(batch.gf.unify ? applyStyleGuide(c, g) : c)}</span>`).join('');
+  box.innerHTML = getSampleComps(batch.gf.family).map((c) => `<span class="thumb">${renderSVG(batch.gf.unify ? applyStyleGuide(c, g) : c)}</span>`).join('');
 }
 
 function renderPlanEditor(el) {
@@ -1263,7 +1278,7 @@ function renderResults(el) {
     <div class="guide-summary">
       <span class="hint">スタイル:</span> ${SHAPES[g.background.shape] || 'なし'} ${sw(g.background.color)}${g.background.color2 ? sw(g.background.color2) : ''}
       <span class="hint">メイン</span>${sw(g.iconColor)} <span class="hint">アクセント</span>${sw(g.accentColor)}
-      <span class="hint">線 ${g.strokeWidth} / バッジ ${BADGE_POSITIONS[g.badgePosition]} / ${batch.gf.unify ? '自動補正オン' : '自動補正オフ'}</span>
+      <span class="hint">${FAMILIES[g.family]} / 線 ${g.strokeWidth} / バッジ ${BADGE_POSITIONS[g.badgePosition]} / ${batch.gf.unify ? '自動補正オン' : '自動補正オフ'}</span>
     </div>
     <p class="hint">各アイコンの案をクリックして選んでください。選んだ案が書き出し・保存の対象になります。</p>
     <div class="result-items">${batch.items.map(itemHTML).join('')}</div>`;
@@ -1318,6 +1333,7 @@ async function runItem(it, mode, signal) {
       makeSheet,
       instruction: mode === 'derive' ? (it.instruction || '').trim() : '',
       count: batch.count,
+      family: guide.family,
       signal,
       onStatus: (m) => { it.message = m; renderItemMessage(it); },
     });
@@ -1455,7 +1471,10 @@ async function init() {
   // 保存済みの作品も検証・サニタイズしてから表示する
   gallery = gallery.filter((g) => g && g.comp).map((g) => ({ ...g, comp: normalizeComposition(g.comp, g.comp.name).comp }));
   renderGallery();
-  const setNames = { lucide: 'Lucide', tabler: 'Tabler', 'tabler-filled': 'Tabler 塗り' };
+  const setNames = {
+    lucide: 'Lucide（線）', tabler: 'Tabler（線）', 'tabler-filled': 'Tabler（塗り）',
+    pinhead: 'Pinhead（ピクトグラム）', 'material-symbols': 'Material Symbols（塗り）',
+  };
   $('#set-filter').innerHTML = store.sets.map((s) =>
     `<label><input type="checkbox" value="${s.id}" checked> ${setNames[s.id] || s.name} <span class="hint">(${s.license})</span></label>`).join('');
   $('#set-filter').addEventListener('change', runSearch);

@@ -9,7 +9,10 @@
     "serve": "npx --yes http-server -p 8080 -c-1 ."
   },
   "devDependencies": {
+    "@iconify-json/material-symbols": "1.2.97",
+    "@iconify-json/pinhead": "1.2.39",
     "@tabler/icons": "3.50.0",
+    "@waysidemapping/pinhead": "16.26.0",
     "jszip": "^3.10.1",
     "lucide-static": "1.69.0"
   }

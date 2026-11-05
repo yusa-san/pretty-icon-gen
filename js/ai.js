@@ -1,5 +1,5 @@
 // 生成AIアシスト: ブラウザから各社APIを直接呼び出す（APIキーはユーザーのブラウザ内にのみ保持）
-import { searchIcons, getIcon } from './icons.js';
+import { searchIcons, getIcon, setsForFamily } from './icons.js';
 import { normalizeComposition, compactComposition, SHAPES } from './compose.js';
 
 export const PROVIDERS = {
@@ -239,14 +239,18 @@ const PARTS_SCHEMA = obj({ parts: { type: 'array', items: obj({ name: STR, keywo
 const PLAN_SCHEMA = obj({
   styleGuide: obj({
     background: BACKGROUND_SCHEMA, iconColor: STR, accentColor: STR, badgeIconColor: STR,
-    strokeWidth: NUM, badgePosition: { type: 'string', enum: ['br', 'bl', 'tr', 'tl', 'auto'] }, notes: STR,
-  }, ['background', 'iconColor', 'accentColor', 'badgeIconColor', 'strokeWidth', 'badgePosition', 'notes']),
+    strokeWidth: NUM, badgePosition: { type: 'string', enum: ['br', 'bl', 'tr', 'tl', 'auto'] },
+    family: { type: 'string', enum: ['line', 'solid'] }, notes: STR,
+  }, ['background', 'iconColor', 'accentColor', 'badgeIconColor', 'strokeWidth', 'badgePosition', 'family', 'notes']),
   items: { type: 'array', items: obj({ name: STR, concept: STR, keywords: { type: 'array', items: STR }, question: STR }, ['name', 'concept', 'keywords', 'question']) },
 }, ['styleGuide', 'items']);
 
 // ---------- プロンプト ----------
 
-const PLAN_SYSTEM = `You are the art director for a set of icons. Each icon is built on a 100x100 canvas by MIXING open-source line icons (Lucide / Tabler: furniture, objects, devices, nature, symbols, speech bubbles, confetti, waves, simple person figures...) with a few hand-drawn SVG lines for what the library lacks (specific poses, ground/shore lines, connections).
+const PLAN_SYSTEM = `You are the art director for a set of icons. Each icon is built on a 100x100 canvas by combining open-source icons with a few hand-drawn SVG lines for what the library lacks.
+Two icon families are available — pick ONE for the whole set:
+- "line": outline icons (Lucide / Tabler) — good for UI-style icons of objects and concepts.
+- "solid": filled pictograms (Pinhead map pictograms, Material Symbols, Tabler Filled) — best for people, actions and scenes. Pinhead has thousands of signage-style pictograms whose names describe whole scenes (e.g. person-sitting-on-bench-with-armrests-and-backrest, person-fishing-from-pier-above-water, person-dancing-with-sparkles, crowd-of-people, speech-bubbles, waters, shore).
 You receive a list of icon requests (often in Japanese) and optional style preferences.
 Produce:
 1) One style guide for the whole set so the icons look consistent.
@@ -261,21 +265,23 @@ Respond with JSON only:
   "badgeIconColor": "#hex (icon drawn on top of an accent shape)",
   "strokeWidth": 1.5-2.5,
   "badgePosition": "br|bl|tr|tl|auto",
+  "family": "line|solid",
   "notes": "short Japanese notes about the visual direction"
  },
  "items": [
-  {"name": "short Japanese name", "concept": "Japanese description of exactly what to show and WHERE: every element with its count, pose/orientation and position on the canvas, and for each element whether it comes from an icon (アイコン) or is hand-drawn (手描き). e.g. 中央左に椅子（アイコン: armchair）、そこに座る人物1人（手描き・右向き）、足元に岸の線（手描き）、下3分の1に波（アイコン: waves）。人物と波は重ねない", "keywords": ["one or two English icon-search words for EACH element that should come from the icon library, e.g. armchair, chair, waves, confetti, speech bubble"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
+  {"name": "short Japanese name", "concept": "Japanese description of exactly what to show and WHERE: every element with its count, pose/orientation and position on the canvas, and for each element whether it comes from an icon (アイコン) or is hand-drawn (手描き). e.g. 中央左に椅子（アイコン: armchair）、そこに座る人物1人（手描き・右向き）、足元に岸の線（手描き）、下3分の1に波（アイコン: waves）。人物と波は重ねない", "keywords": ["English icon-search phrases for EACH element that should come from the icon library, in icon-name vocabulary, e.g. person sitting bench, waters, speech bubbles, person dancing, confetti, armchair"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
  ]
 }
 Rules:
 - items must have exactly one entry per request, in order.
-- Prefer library icons for concrete objects (they look much better than hand-drawn ones); plan hand-drawing only for what icons cannot express.
+- Prefer library icons (they look much better than hand-drawn ones); with the solid family, look first for a single pictogram that already shows the scene or pose, then add parts. Plan hand-drawing only for what icons cannot express (e.g. a shore line).
 - Think about what makes each request recognizable AND what distinguishes it from the other items in the set (e.g. number of people, posture, mood). Make those differences explicit and obvious, and keep shared elements (e.g. the same water/shore treatment) identical across items.
 - Icons are tiny: few, large, simple elements.
 - Honor the user's style preferences when given.`;
 
 const PARTS_SYSTEM = `You help build an icon by combining open-source line icons (Lucide / Tabler) with a few hand-drawn lines.
-Given the request (often in Japanese), list the concrete objects/elements that could come from an icon library, each with 1-3 English search words in icon-library vocabulary (e.g. 椅子 → armchair, chair; 波 → waves; 会話 → message, speech; お祝い → confetti, party).
+Given the request (often in Japanese), list the concrete objects/elements that could come from an icon library, each with 1-3 English search words or short phrases in icon-name vocabulary (e.g. 椅子に座る人 → person sitting bench, armchair; 波 → waters, waves; 会話 → speech bubbles, message; お祝い → confetti, party popper, person dancing).
+The libraries include signage-style pictograms whose names describe people and scenes (person-sitting-on-bench..., person-standing-open-armed, crowd-of-people), so include phrases for people/poses too.
 Include alternatives for the main subject. Skip things that only make sense hand-drawn (specific poses, ground lines).
 Respond with JSON only: {"parts":[{"name":"Japanese name","keywords":["english","words"]}]}`;
 
@@ -284,6 +290,7 @@ const VARIANTS_SYSTEM = `You are a skilled icon designer. You build icons on a 1
 Layers (drawn in array order, first = bottom). Every layer has "role": "main" (core motif), "detail" (other scene elements) or "badge" (small corner modifier).
 - {"type":"icon","role":"main","icon":"<candidate id>","x":50,"y":50,"size":60,"rotate":0,"flipX":false,"color":"#hex","strokeWidth":2,"halo":0,"haloColor":"#hex"}
   A library icon (24x24 source). x,y = center of its box, size = box width/height. You can scale, rotate, flip and recolor it.
+  Icons are always square (no stretching): for a wide element such as a band of water across the scene, place 2-3 copies side by side or hand-draw it.
 - {"type":"draw","role":"detail","markup":"<path d='...'/>"}  Your own SVG drawn directly in canvas coordinates (0..100, origin top-left).
   Write SVG attributes with SINGLE quotes inside markup (e.g. <path d='M10 10 L20 20' fill='none'/>) so the JSON string stays valid.
   Allowed elements: g, path, circle, ellipse, rect, line, polyline, polygon. Allowed attributes: geometry, fill, stroke, stroke-width, stroke-linecap, stroke-linejoin, fill-rule, opacity, transform. No gradients, filters, text, images or url(...).
@@ -294,8 +301,10 @@ Background: {"shape":"none|${Object.keys(SHAPES).join('|')}","color":"#hex","col
 
 How to build it:
 - Think first: what must the viewer recognize instantly? Show exactly that, with the few details that make it unambiguous.
-- USE LIBRARY ICONS for concrete objects (furniture, devices, vehicles, buildings, plants, food, tools, symbols, speech bubbles, confetti, waves, ...) whenever a candidate fits — they look far better than hand-drawn versions. Candidates are grouped by the element they were found for.
-- DRAW BY HAND only what the library cannot provide: people in a specific pose or interaction (e.g. a pictogram person sitting on the chair icon: solid circle head, torso and limbs as thick round-capped lines), ground/shore lines spanning the scene, connecting lines, small custom details. You may also copy a candidate's paths into a draw layer to modify it (scale with transform='translate(tx ty) scale(k)', k = size/24).
+- USE LIBRARY ICONS whenever a candidate fits — they look far better than hand-drawn versions. Candidates are grouped by the element they were found for; [solid] marks filled pictograms, [line] outline icons.
+- Use ONE family per icon as the style guide says (do not mix [line] and [solid] icons). Solid pictograms (pinhead:...) often already show a whole pose or scene (e.g. pinhead:person-sitting-on-bench-with-armrests-and-backrest) — use such an icon as the base and add only what is missing.
+- Pictograms of people are designed to be legible: prefer them over drawing people yourself.
+- DRAW BY HAND only what the library cannot provide: ground/shore lines spanning the scene, connecting lines, small custom details — and people only if no pictogram fits (solid circle head, filled torso, thick round-capped limbs). You may also copy a candidate's paths into a draw layer to modify it (scale with transform='translate(tx ty) scale(k)', k = size/24).
 - Fit the pieces together: e.g. a hand-drawn person must actually sit on/stand next to the icon, aligned to its seat or edge; nothing important may overlap unless intended. Plan coordinates before writing.
 - One visual style: same color family and the SAME visual line width everywhere. An icon layer's visual line width = strokeWidth × size / 24 canvas units (size 48, strokeWidth 2 → 4 units); draw your lines with that same width, round caps/joins, fill='none' for line parts.
 - Keep the main content within about 18..82 (with a background shape) or 8..92 (no background). Badges: about 26-34 units in the requested corner, usually a filled accent circle with a small white glyph and a ring in the background color.
@@ -345,7 +354,11 @@ export async function aiReview(settings, { request, concept = '', styleText = ''
  * 部品ごとに候補アイコンを集める（ローカル検索、AI呼び出しなし）
  * @returns {Array<{label: string, icons: object[]}>}
  */
-function candidateGroups(keywords, extraTexts = [], extraIds = [], perKeyword = 4, limit = 36) {
+function candidateGroups(keywords, extraTexts = [], extraIds = [], family = 'auto', perKeyword = 4, limit = 40) {
+  const famSets = (f) => setsForFamily(f);
+  const searchFam = (q, n) => (family === 'auto'
+    ? [...searchIcons(q, { sets: famSets('solid'), limit: Math.ceil(n / 2) + 1 }), ...searchIcons(q, { sets: famSets('line'), limit: Math.ceil(n / 2) })]
+    : searchIcons(q, { sets: famSets(family), limit: n }));
   const seen = new Set();
   const groups = [];
   let total = 0;
@@ -357,22 +370,20 @@ function candidateGroups(keywords, extraTexts = [], extraIds = [], perKeyword = 
   add('in the current design', extraIds.map(getIcon));
   for (const kw of keywords) {
     if (total >= limit) break;
-    add(kw, [
-      ...searchIcons(kw, { sets: ['lucide', 'tabler'], limit: perKeyword }),
-      ...searchIcons(kw, { sets: ['tabler-filled'], limit: 1 }),
-    ]);
+    add(kw, searchFam(kw, perKeyword));
   }
   // キーワードが無い・少ないときは依頼文そのもの（日本語辞書で英語化）でも探す
   for (const t of extraTexts.filter(Boolean)) {
     if (total >= limit) break;
-    add(`from "${t.slice(0, 30)}"`, searchIcons(t, { sets: ['lucide', 'tabler'], limit: perKeyword }));
+    add(`from "${t.slice(0, 30)}"`, searchFam(t, perKeyword));
   }
   return groups;
 }
 
-const describeRef = (icon) => `  ${icon.id}${icon.style === 'fill' ? ' [filled]' : ''} (${icon.tags.slice(0, 4).join(', ')}): ${icon.body}`;
+// 長いSVG（複雑なピクトグラム）は名前だけ渡す（名前が内容を表しているため）
+const describeRef = (icon) => `  ${icon.id} [${icon.family}]${icon.tags.length ? ` (${icon.tags.slice(0, 4).join(', ')})` : ''}${icon.body.length <= 700 ? `: ${icon.body}` : ''}`;
 const groupsText = (groups) => (groups.length
-  ? `Candidate library icons (24x24; line icons unless [filled]), grouped by element:\n${groups.map((g) => `- ${g.label}:\n${g.icons.map(describeRef).join('\n')}`).join('\n')}`
+  ? `Candidate library icons (24x24 source; [line] = outline icon, [solid] = filled pictogram; SVG shown for simple ones), grouped by element:\n${groups.map((g) => `- ${g.label}:\n${g.icons.map(describeRef).join('\n')}`).join('\n')}`
   : '');
 
 /** 依頼から「アイコンで表せる部品」と検索語を出す（AI 1回、仕様が無いときだけ） */
@@ -421,14 +432,14 @@ export async function aiPlan(settings, requests, prefs = '', signal) {
  * @returns {Promise<{variants: Array<{comp, idea, warnings}>, keywords: string[]}>}
  */
 export async function aiVariants(settings, p) {
-  const { request, concept = '', styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus, makeSheet = null } = p;
+  const { request, concept = '', styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus, makeSheet = null, family = 'auto' } = p;
   let keywords = (p.keywords || []).filter(Boolean);
   if (!keywords.length) {
     onStatus?.('使えるアイコンを探しています…');
     keywords = await aiParts(settings, [request, concept, instruction].filter(Boolean).join(' / '), signal);
   }
   const baseIds = base ? base.layers.filter((l) => l.type === 'icon').map((l) => l.icon) : [];
-  const groups = candidateGroups(keywords, [instruction, request], baseIds);
+  const groups = candidateGroups(keywords, [instruction, request], baseIds, family);
   const refsText = groupsText(groups);
 
   onStatus?.(`AIが${count > 1 ? `${count}案を` : ''}組み立てています…`);

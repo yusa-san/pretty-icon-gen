@@ -22,6 +22,7 @@ export async function loadIcons(url = 'data/icons.json') {
       tags: tags ? tags.toLowerCase().split(',') : [],
       body,
       style: set.style,
+      family: set.family || (set.style === 'fill' ? 'solid' : 'line'),
     };
     return icon;
   });
@@ -30,6 +31,11 @@ export async function loadIcons(url = 'data/icons.json') {
 }
 
 export const getIcon = (id) => store.byId.get(id);
+
+/** 絵柄の系統に属するセットID（'line' / 'solid'。それ以外は全セット） */
+export function setsForFamily(family) {
+  return store.sets.filter((s) => !family || family === 'auto' || (s.family || (s.style === 'fill' ? 'solid' : 'line')) === family).map((s) => s.id);
+}
 
 const JA_KEYS = Object.keys(JA_DICT).sort((a, b) => b.length - a.length);
 const isAscii = (s) => /^[\x00-\x7f]+$/.test(s);
