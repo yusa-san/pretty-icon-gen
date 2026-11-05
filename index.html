@@ -26,8 +26,8 @@
   </header>
 
   <!-- ===== エディタ ===== -->
-  <section id="tab-editor" class="tab-panel active">
-    <aside class="panel search-panel">
+  <section id="tab-editor" class="tab-panel active" data-m="search">
+    <aside class="panel search-panel" data-msec="search">
       <div class="search-box">
         <input id="q" type="search" placeholder="単語で検索（例: 家、メール、shield、カート）" autocomplete="off">
       </div>
@@ -46,6 +46,7 @@
     </aside>
 
     <main class="panel canvas-panel">
+      <div class="canvas-top">
       <div class="toolbar">
         <button id="btn-undo" class="btn small" title="元に戻す (Ctrl+Z)">↶</button>
         <button id="btn-redo" class="btn small" title="やり直し (Ctrl+Y)">↷</button>
@@ -55,7 +56,15 @@
       <div class="stage-wrap" id="stage-wrap">
         <svg id="stage" viewBox="-8 -8 116 116" xmlns="http://www.w3.org/2000/svg" aria-label="キャンバス"></svg>
       </div>
-      <div class="place-row" id="place-row">
+      <nav class="mobile-seg" id="mobile-seg" aria-label="編集メニュー">
+        <button data-m="search" class="active">素材</button>
+        <button data-m="adjust">調整</button>
+        <button data-m="layers">レイヤー</button>
+        <button data-m="export">書き出し</button>
+        <button data-m="ai">AI</button>
+      </nav>
+      </div>
+      <div class="place-row msec-card" id="place-row" data-msec="adjust">
         <span class="label">配置</span>
         <button class="btn tiny" data-place="tl" title="左上">↖</button>
         <button class="btn tiny" data-place="tr" title="右上">↗</button>
@@ -67,7 +76,7 @@
         <button class="btn tiny" data-size="56">中</button>
         <button class="btn tiny" data-size="36">小</button>
       </div>
-      <div class="export-row">
+      <div class="export-row msec-card" data-msec="export">
         <label>サイズ
           <select id="export-size">
             <option>16</option><option>24</option><option>32</option><option>48</option><option>64</option>
@@ -81,7 +90,7 @@
         <button id="btn-dl-json" class="btn ghost" title="あとで再編集できるプロジェクトファイル">JSON</button>
         <label class="btn ghost file-btn">JSON読込<input id="input-json" type="file" accept=".json,application/json" hidden></label>
       </div>
-      <div class="ai-assist">
+      <div class="ai-assist msec-card" data-msec="ai">
         <div class="ai-assist-head">
           <strong>AIアシスト</strong>
           <span class="hint" id="ai-assist-hint">AI設定でAPIキーを入れると使えます</span>
@@ -96,12 +105,16 @@
     </main>
 
     <aside class="panel props-panel">
-      <h3>背景</h3>
-      <div id="bg-props" class="props"></div>
-      <h3>レイヤー <small class="hint">上ほど前面</small></h3>
-      <ul id="layer-list" class="layer-list"></ul>
-      <h3 id="sel-title">選択中のレイヤー</h3>
-      <div id="layer-props" class="props"><p class="hint">キャンバス上のパーツをクリックして選択</p></div>
+      <div class="psec msec-card" data-msec="layers">
+        <h3>レイヤー <small class="hint">上ほど前面</small></h3>
+        <ul id="layer-list" class="layer-list"></ul>
+        <h3>背景</h3>
+        <div id="bg-props" class="props"></div>
+      </div>
+      <div class="psec msec-card" data-msec="adjust">
+        <h3 id="sel-title">選択中のレイヤー</h3>
+        <div id="layer-props" class="props"><p class="hint">キャンバス上のパーツをクリックして選択</p></div>
+      </div>
     </aside>
   </section>
 

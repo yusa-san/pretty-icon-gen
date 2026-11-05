@@ -101,6 +101,17 @@ input[type=range] { accent-color: var(--accent); }
 .add-others .row input { flex: 1; }
 
 .canvas-panel { display: flex; flex-direction: column; gap: 10px; }
+.canvas-top { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.mobile-seg { display: none; gap: 2px; padding: 6px 0 8px; overflow-x: auto; }
+.mobile-seg button {
+  flex: 1; font: inherit; font-size: 13px; border: none; border-radius: 99px; padding: 8px 6px; min-height: 36px;
+  background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; position: relative;
+}
+.mobile-seg button.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.mobile-seg button.has-sel:not(.active)::after {
+  content: ''; position: absolute; top: 6px; right: 10px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+.psec + .psec { margin-top: 16px; }
 .toolbar { display: flex; gap: 6px; align-items: center; }
 .name-input { flex: 1; font-weight: 600; }
 .stage-wrap {
@@ -189,11 +200,73 @@ dialog::backdrop { background: rgba(10, 12, 20, .45); }
   .search-panel { max-height: 80vh; }
 }
 @media (max-width: 760px) {
-  #tab-editor { grid-template-columns: minmax(0, 1fr); padding: 8px; }
-  .search-panel { max-height: 60vh; order: 2; }
-  .canvas-panel { order: 1; }
-  .props-panel { order: 3; }
-  .batch-layout { grid-template-columns: minmax(0, 1fr); }
+  body { font-size: 15px; }
+  /* iOSで入力時にズームされないよう16px以上に */
+  input[type=text], input[type=search], input[type=password], input[type=number], select, textarea { font-size: 16px; }
+  .app-header {
+    position: static; display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; padding: 8px 10px;
+  }
+  .brand { font-size: 15px; }
   .header-actions { margin-left: 0; }
-  .app-header { gap: 8px; }
+  .header-actions .btn { padding: 6px 9px; }
+  .tabs { grid-column: 1 / -1; grid-row: 2; }
+  .tabs .tab { flex: 1; padding: 8px 4px; }
+
+  /* エディタ: キャンバスを上部に固定し、下を切り替えセクションにする */
+  #tab-editor.active { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 24px; height: auto; }
+  #tab-editor > .canvas-panel, #tab-editor > .props-panel { display: contents; }
+  .canvas-top {
+    order: -1; position: sticky; top: 0; z-index: 5; background: var(--bg);
+    margin: 0 -8px; padding: 8px 8px 0; border-bottom: 1px solid var(--border);
+    box-shadow: 0 6px 12px -10px rgba(0, 0, 0, .25);
+  }
+  .canvas-top .toolbar { margin-bottom: 6px; }
+  .stage-wrap { min-height: 0; flex: none; height: min(calc(100vw - 16px), 40vh); border-radius: 10px; background: var(--stage-bg); }
+  #stage { width: auto; height: 100%; max-width: 100%; }
+  .mobile-seg { display: flex; }
+  #tab-editor [data-msec] { display: none; }
+  #tab-editor[data-m="search"] [data-msec="search"],
+  #tab-editor[data-m="adjust"] [data-msec="adjust"],
+  #tab-editor[data-m="layers"] [data-msec="layers"],
+  #tab-editor[data-m="export"] [data-msec="export"],
+  #tab-editor[data-m="ai"] [data-msec="ai"] { display: flex; }
+  #tab-editor .msec-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px;
+    flex-direction: column; align-items: stretch;
+  }
+  #tab-editor .search-panel { max-height: none; overflow: visible; }
+  .icon-grid { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+  .place-row { flex-direction: row !important; flex-wrap: wrap; align-items: center !important; }
+  .place-row .btn.tiny { min-width: 44px; min-height: 40px; font-size: 15px; }
+  .export-row { flex-direction: row !important; flex-wrap: wrap; align-items: center !important; }
+  .export-row .btn { min-height: 42px; flex: 1 1 40%; }
+  .export-row label:first-child { flex: 1 1 100%; font-size: 14px; }
+  .export-row select { flex: 1; }
+  .ai-assist { border-top: none; padding-top: 12px; }
+  .ai-assist .btn { min-height: 42px; flex: 1; }
+  .props { grid-template-columns: 84px minmax(0, 1fr); gap: 10px 8px; font-size: 13px; }
+  .props .ctl input[type=number] { width: 64px; }
+  .swatch { width: 26px; height: 26px; }
+  .layer-item { padding: 6px; gap: 4px; }
+  .layer-thumb { width: 34px; height: 34px; }
+  .layer-item .btn.tiny { min-width: 34px; min-height: 34px; font-size: 14px; }
+  .add-others .row .btn { min-height: 40px; }
+
+  .batch-layout { grid-template-columns: minmax(0, 1fr); }
+  #tab-batch, #tab-gallery { padding: 8px; }
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .card .actions .btn { padding: 6px 10px; font-size: 13px; }
+  .form-grid { grid-template-columns: 1fr 1fr; }
+  .row.space { gap: 8px; }
+  dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .dlg { padding: 16px; }
+  .dlg .btn { min-height: 42px; }
+}
+@media (max-width: 760px) and (max-height: 500px) {
+  /* 横向きスマホ */
+  .stage-wrap { height: 55vh; }
+}
+@media (pointer: coarse) {
+  .btn { min-height: 36px; }
+  .icon-btn { padding: 10px; }
 }

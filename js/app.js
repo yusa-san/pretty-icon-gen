@@ -151,6 +151,19 @@ function loadComposition(comp, galleryId = null) {
 const stage = $('#stage');
 const selected = () => state.comp.layers.find((l) => l.id === state.selectedId) || null;
 
+// ---- スマホ用: 編集メニューの切り替え
+const mobileMQ = matchMedia('(max-width: 760px)');
+const coarseMQ = matchMedia('(pointer: coarse)');
+const isMobile = () => mobileMQ.matches;
+function setMobileSection(name) {
+  $('#tab-editor').dataset.m = name;
+  $$('#mobile-seg button').forEach((b) => b.classList.toggle('active', b.dataset.m === name));
+}
+$('#mobile-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-m]');
+  if (b) setMobileSection(b.dataset.m);
+});
+
 function stageMarkup() {
   const comp = state.comp;
   const defs = `<defs><pattern id="stage-checker" width="8" height="8" patternUnits="userSpaceOnUse">
@@ -169,17 +182,21 @@ function stageMarkup() {
   const s = selected();
   if (s && !s.hidden) {
     const h = s.size / 2;
+    const k = coarseMQ.matches ? 1.8 : 1; // タッチ操作ではハンドルを大きく
     out += `<g transform="translate(${s.x} ${s.y}) rotate(${s.rotate || 0})" pointer-events="none">
       <rect x="${-h}" y="${-h}" width="${s.size}" height="${s.size}" fill="none" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="1.5 1"/>
-      <line x1="0" y1="${-h}" x2="0" y2="${-h - 6}" stroke="var(--accent)" stroke-width="0.4"/></g>
+      <line x1="0" y1="${-h}" x2="0" y2="${-h - 6 * k}" stroke="var(--accent)" stroke-width="0.4"/></g>
       <g transform="translate(${s.x} ${s.y}) rotate(${s.rotate || 0})">
-      <circle data-handle="rotate" cx="0" cy="${-h - 6}" r="2.2" fill="var(--panel)" stroke="var(--accent)" stroke-width="0.6" style="cursor:grab"/>
-      <rect data-handle="scale" x="${h - 2}" y="${h - 2}" width="4" height="4" rx="0.8" fill="var(--accent)" style="cursor:nwse-resize"/></g>`;
+      <circle data-handle="rotate" cx="0" cy="${-h - 6 * k}" r="${2.2 * k}" fill="var(--panel)" stroke="var(--accent)" stroke-width="0.6" style="cursor:grab"/>
+      <rect data-handle="scale" x="${h - 2 * k}" y="${h - 2 * k}" width="${4 * k}" height="${4 * k}" rx="0.8" fill="var(--accent)" style="cursor:nwse-resize"/></g>`;
   }
   return out;
 }
 
-function renderStage() { stage.innerHTML = stageMarkup(); }
+function renderStage() {
+  stage.innerHTML = stageMarkup();
+  $('#mobile-seg [data-m="adjust"]').classList.toggle('has-sel', !!state.selectedId);
+}
 function renderAll() {
   renderStage();
   renderLayerList();
@@ -193,8 +210,27 @@ function svgPoint(evt) {
 }
 
 let drag = null;
+const pointers = new Map(); // pointerId -> {x, y}（ステージ座標）
+
+function pinchInfo() {
+  const [a, b] = [...pointers.values()];
+  return { dist: Math.hypot(b.x - a.x, b.y - a.y) || 1, angle: Math.atan2(b.y - a.y, b.x - a.x) };
+}
+
 stage.addEventListener('pointerdown', (e) => {
   const p = svgPoint(e);
+  pointers.set(e.pointerId, p);
+  try { stage.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  e.preventDefault();
+  // 2本指: 選択中のレイヤーをピンチで拡大縮小・回転
+  if (pointers.size === 2) {
+    const l = selected();
+    if (!l) { drag = null; return; }
+    const { dist, angle } = pinchInfo();
+    drag = { mode: 'pinch', l, dist0: dist, angle0: angle, size0: l.size, rot0: l.rotate || 0 };
+    return;
+  }
+  if (pointers.size > 2) return;
   const handle = e.target.closest('[data-handle]');
   const hit = e.target.closest('[data-hit]');
   if (handle && selected()) {
@@ -206,17 +242,26 @@ stage.addEventListener('pointerdown', (e) => {
     drag = { mode: 'move', l, p0: p, x0: l.x, y0: l.y };
     renderAll();
   } else {
+    drag = null;
     if (state.selectedId) { state.selectedId = null; renderAll(); }
-    return;
   }
-  stage.setPointerCapture(e.pointerId);
-  e.preventDefault();
 });
 stage.addEventListener('pointermove', (e) => {
-  if (!drag) return;
+  if (!pointers.has(e.pointerId)) return;
   const p = svgPoint(e);
+  pointers.set(e.pointerId, p);
+  if (!drag) return;
   const l = drag.l;
-  if (drag.mode === 'move') {
+  if (drag.mode === 'pinch') {
+    if (pointers.size < 2) return;
+    const { dist, angle } = pinchInfo();
+    l.size = Math.max(2, Math.round(drag.size0 * (dist / drag.dist0) * 10) / 10);
+    let r = drag.rot0 + ((angle - drag.angle0) * 180) / Math.PI;
+    r = ((r + 540) % 360) - 180;
+    // 45°の倍数付近には吸着
+    const m = ((r % 45) + 45) % 45;
+    l.rotate = m < 3 || m > 42 ? Math.round(r / 45) * 45 : Math.round(r);
+  } else if (drag.mode === 'move') {
     let x = drag.x0 + (p.x - drag.p0.x), y = drag.y0 + (p.y - drag.p0.y);
     if (!e.altKey) {
       if (Math.abs(x - 50) < 1.5) x = 50;
@@ -231,12 +276,20 @@ stage.addEventListener('pointermove', (e) => {
     if (a > 180) a -= 360;
     a = e.shiftKey ? Math.round(a) : Math.round(a / 15) * 15;
     l.rotate = a;
+  } else {
+    return;
   }
   renderStage();
   refreshPropValues();
 });
-const endDrag = () => {
+const endDrag = (e) => {
+  pointers.delete(e.pointerId);
   if (!drag) return;
+  if (pointers.size) {
+    // ピンチ後に1本指が残っても、指を全部離すまでは移動に切り替えない
+    if (drag.mode === 'pinch') drag = { mode: 'none', l: drag.l };
+    return;
+  }
   drag = null;
   renderLayerList();
   record();
@@ -289,6 +342,7 @@ function replaceSelectedIcon(iconId) {
   renderAll();
   record();
   toast('アイコンを差し替えました');
+  if (isMobile()) setMobileSection('adjust');
 }
 
 function moveLayer(id, dir) {
@@ -360,6 +414,7 @@ $('#layer-list').addEventListener('click', (e) => {
   }
   state.selectedId = id;
   renderAll();
+  if (isMobile()) setMobileSection('adjust');
 });
 
 // ------------------------------------------------------------------ property forms
@@ -506,7 +561,11 @@ function renderLayerProps() {
     rb.onclick = () => {
       state.replaceMode = !state.replaceMode;
       rb.textContent = state.replaceMode ? '検索結果をクリック…' : '差し替え';
-      if (state.replaceMode) { toast('左の検索結果から差し替えるアイコンを選んでください'); $('#q').focus(); }
+      if (state.replaceMode) {
+        toast('検索結果から差し替えるアイコンを選んでください');
+        if (isMobile()) setMobileSection('search');
+        else $('#q').focus();
+      }
     };
   }
 }
