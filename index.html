@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pretty Icon Gen — フリーSVGアイコン合成ツール</title>
+  <meta name="description" content="商用利用・再配布・改変OKのSVGアイコン（Lucide / Tabler）を組み合わせて、新しいアイコンを作ってダウンロードできるツール。生成AIによる一括作成にも対応。">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="28" height="28">
+      <span>Pretty Icon Gen</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="editor" role="tab">エディタ</button>
+      <button class="tab" data-tab="batch" role="tab">AI一括発注</button>
+      <button class="tab" data-tab="gallery" role="tab">ギャラリー <span id="gallery-count" class="pill">0</span></button>
+    </nav>
+    <div class="header-actions">
+      <button id="btn-ai-settings" class="btn ghost"><span id="ai-status-dot" class="dot"></span>AI設定</button>
+      <button id="btn-license" class="btn ghost">ライセンス</button>
+    </div>
+  </header>
+
+  <!-- ===== エディタ ===== -->
+  <section id="tab-editor" class="tab-panel active" data-m="search">
+    <aside class="panel search-panel" data-msec="search">
+      <div class="search-box">
+        <input id="q" type="search" placeholder="単語で検索（例: 家、メール、shield、カート）" autocomplete="off">
+      </div>
+      <div class="set-filter" id="set-filter"></div>
+      <div class="hint" id="search-hint">読み込み中…</div>
+      <div id="results" class="icon-grid"></div>
+      <button id="more-results" class="btn small block" hidden>もっと見る</button>
+      <details class="add-others" open>
+        <summary>図形・テキストを追加</summary>
+        <div id="shape-buttons" class="shape-buttons"></div>
+        <div class="row">
+          <input id="text-to-add" type="text" maxlength="12" placeholder="テキスト（例: AI, 新）">
+          <button id="btn-add-text" class="btn small">追加</button>
+        </div>
+      </details>
+    </aside>
+
+    <main class="panel canvas-panel">
+      <div class="canvas-top">
+      <div class="toolbar">
+        <button id="btn-undo" class="btn small" title="元に戻す (Ctrl+Z)">↶</button>
+        <button id="btn-redo" class="btn small" title="やり直し (Ctrl+Y)">↷</button>
+        <button id="btn-new" class="btn small" title="新規作成">新規</button>
+        <input id="comp-name" class="name-input" type="text" maxlength="80" aria-label="アイコン名">
+      </div>
+      <div class="stage-wrap" id="stage-wrap">
+        <svg id="stage" viewBox="-8 -8 116 116" xmlns="http://www.w3.org/2000/svg" aria-label="キャンバス"></svg>
+      </div>
+      <nav class="mobile-seg" id="mobile-seg" aria-label="編集メニュー">
+        <button data-m="search" class="active">素材</button>
+        <button data-m="adjust">調整</button>
+        <button data-m="layers">レイヤー</button>
+        <button data-m="export">書き出し</button>
+        <button data-m="ai">AI</button>
+      </nav>
+      </div>
+      <div class="place-row msec-card" id="place-row" data-msec="adjust">
+        <span class="label">配置</span>
+        <button class="btn tiny" data-place="tl" title="左上">↖</button>
+        <button class="btn tiny" data-place="tr" title="右上">↗</button>
+        <button class="btn tiny" data-place="c" title="中央">●</button>
+        <button class="btn tiny" data-place="bl" title="左下">↙</button>
+        <button class="btn tiny" data-place="br" title="右下">↘</button>
+        <span class="sep"></span>
+        <button class="btn tiny" data-size="80">大</button>
+        <button class="btn tiny" data-size="56">中</button>
+        <button class="btn tiny" data-size="36">小</button>
+      </div>
+      <div class="export-row msec-card" data-msec="export">
+        <label>サイズ
+          <select id="export-size">
+            <option>16</option><option>24</option><option>32</option><option>48</option><option>64</option>
+            <option>128</option><option>256</option><option selected>512</option><option>1024</option>
+          </select>
+        </label>
+        <button id="btn-dl-svg" class="btn primary">SVG</button>
+        <button id="btn-dl-png" class="btn primary">PNG</button>
+        <button id="btn-copy-svg" class="btn">SVGコピー</button>
+        <button id="btn-save-gallery" class="btn">ギャラリーに保存</button>
+        <button id="btn-dl-json" class="btn ghost" title="あとで再編集できるプロジェクトファイル">JSON</button>
+        <label class="btn ghost file-btn">JSON読込<input id="input-json" type="file" accept=".json,application/json" hidden></label>
+      </div>
+      <div class="ai-assist msec-card" data-msec="ai">
+        <div class="ai-assist-head">
+          <strong>AIアシスト</strong>
+          <span class="hint" id="ai-assist-hint">AI設定でAPIキーを入れると使えます</span>
+        </div>
+        <textarea id="ai-prompt" rows="2" placeholder="例: 「雲に鍵のバッジをつけたセキュアなクラウド」/ 修正なら「バッジを左上にして赤に」"></textarea>
+        <div class="row">
+          <button id="btn-ai-new" class="btn primary">AIで新規作成</button>
+          <button id="btn-ai-edit" class="btn">今のアイコンをAIで修正</button>
+          <span id="ai-assist-status" class="status"></span>
+        </div>
+      </div>
+    </main>
+
+    <aside class="panel props-panel">
+      <div class="psec msec-card" data-msec="layers">
+        <h3>レイヤー <small class="hint">上ほど前面</small></h3>
+        <ul id="layer-list" class="layer-list"></ul>
+        <h3>背景</h3>
+        <div id="bg-props" class="props"></div>
+      </div>
+      <div class="psec msec-card" data-msec="adjust">
+        <h3 id="sel-title">選択中のレイヤー</h3>
+        <div id="layer-props" class="props"><p class="hint">キャンバス上のパーツをクリックして選択</p></div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ===== AI一括発注 ===== -->
+  <section id="tab-batch" class="tab-panel">
+    <div class="batch-layout">
+      <div class="panel batch-form">
+        <h2>AIにまとめて発注</h2>
+        <p class="hint">1行に1アイコンずつ、欲しいアイコンを日本語で書いてください。AIが候補アイコンを検索して組み合わせます。</p>
+        <textarea id="batch-input" rows="10" placeholder="ユーザー追加&#10;安全なクラウド保存&#10;メールの予約送信&#10;AIチャットボット&#10;エコな配送トラック"></textarea>
+        <h3>共通スタイル</h3>
+        <div class="form-grid">
+          <label>背景
+            <select id="batch-bg">
+              <option value="">おまかせ</option>
+              <option value="none">なし（透明）</option>
+            </select>
+          </label>
+          <label>メインカラー
+            <span class="row"><input type="checkbox" id="batch-use-color"><input type="color" id="batch-color" value="#4f46e5"></span>
+          </label>
+          <label>線の太さ
+            <select id="batch-stroke">
+              <option value="">おまかせ</option><option value="1.5">細め (1.5)</option><option value="2">標準 (2)</option><option value="2.5">太め (2.5)</option>
+            </select>
+          </label>
+          <label>同時実行数
+            <select id="batch-concurrency"><option>1</option><option>2</option><option selected>3</option><option>5</option></select>
+          </label>
+        </div>
+        <label class="block">追加のスタイル指示（任意）
+          <input id="batch-style" type="text" placeholder="例: パステル調、角丸背景、バッジは右下に統一">
+        </label>
+        <div class="row">
+          <button id="btn-batch-run" class="btn primary">一括生成</button>
+          <button id="btn-batch-stop" class="btn" disabled>中止</button>
+          <span id="batch-status" class="status"></span>
+        </div>
+        <p class="hint small">※ APIの利用料金はご自身のAPIキーに課金されます。キーはこのブラウザからAPI提供元へ直接送信され、このサイトのサーバーには送られません。</p>
+      </div>
+      <div class="panel batch-results-panel">
+        <div class="row space">
+          <h2>結果</h2>
+          <div class="row">
+            <button id="btn-batch-zip" class="btn" disabled>すべてZIP</button>
+            <button id="btn-batch-save" class="btn" disabled>すべてギャラリーへ</button>
+          </div>
+        </div>
+        <div id="batch-results" class="card-grid"><p class="hint">まだ結果はありません</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ギャラリー ===== -->
+  <section id="tab-gallery" class="tab-panel">
+    <div class="panel">
+      <div class="row space">
+        <h2>ギャラリー <small class="hint">このブラウザに保存されます</small></h2>
+        <div class="row">
+          <button id="btn-gallery-zip" class="btn">すべてZIP</button>
+          <button id="btn-gallery-export" class="btn ghost">バックアップ(JSON)</button>
+          <label class="btn ghost file-btn">復元<input id="input-gallery" type="file" accept=".json,application/json" hidden></label>
+        </div>
+      </div>
+      <div id="gallery" class="card-grid"></div>
+    </div>
+  </section>
+
+  <!-- ===== AI設定ダイアログ ===== -->
+  <dialog id="dlg-ai">
+    <form method="dialog" class="dlg">
+      <h2>生成AIの設定</h2>
+      <label>プロバイダ
+        <select id="ai-provider"></select>
+      </label>
+      <label>モデル
+        <input id="ai-model" list="ai-model-list" type="text">
+        <datalist id="ai-model-list"></datalist>
+      </label>
+      <label>APIキー
+        <input id="ai-key" type="password" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="check"><input id="ai-remember" type="checkbox"> このブラウザに保存する（共有PCでは使わないでください）</label>
+      <p class="hint small">保存しない場合、キーはタブを閉じると消えます。キーはブラウザから各社APIへ直接送信されます。</p>
+      <div class="row">
+        <button id="btn-ai-test" type="button" class="btn">接続テスト</button>
+        <span id="ai-test-status" class="status"></span>
+      </div>
+      <div class="row end">
+        <button id="btn-ai-clear" type="button" class="btn ghost">キーを消去</button>
+        <button value="cancel" class="btn">閉じる</button>
+        <button id="btn-ai-save" value="save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== ライセンスダイアログ ===== -->
+  <dialog id="dlg-license">
+    <form method="dialog" class="dlg">
+      <h2>アイコン素材のライセンス</h2>
+      <p>このツールに収録しているアイコンはすべて<strong>商用利用・改変・再配布が可能</strong>なオープンソースライセンスです。</p>
+      <div id="license-list"></div>
+      <p class="hint">MIT / ISC ライセンスは、配布時に著作権表示とライセンス文を含めることを求めています。作成したアイコンを配布・同梱する場合は、ZIPに同梱される <code>CREDITS.txt</code> か、リポジトリの <a href="THIRD_PARTY_LICENSES.md" target="_blank" rel="noopener">THIRD_PARTY_LICENSES.md</a> の内容を添えてください。</p>
+      <div class="row end"><button class="btn primary">閉じる</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
