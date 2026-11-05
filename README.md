@@ -41,8 +41,14 @@ AIが返したSVGは、許可した要素・属性（`path` `circle` `rect` な�
 | [Lucide](https://lucide.dev) | 約2,000 | ISC |
 | [Tabler Icons](https://tabler.io/icons)（線） | 約5,200 | MIT |
 | Tabler Icons（塗り） | 約1,000 | MIT |
+| [Pinhead](https://github.com/waysidemapping/pinhead)（ピクトグラム） | 約2,900 | CC0（パブリックドメイン） |
+| [Material Symbols](https://github.com/google/material-design-icons)（塗り） | 約4,100 | Apache-2.0 |
 
-いずれも商用利用・改変・再配布が可能です。MIT / ISC は配布時に著作権表示とライセンス文を含めることを条件としているため、作ったアイコンを配布・同梱する場合は ZIP に入っている `CREDITS.txt`（または [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）を添えてください。
+いずれも商用利用・改変・再配布が可能です。
+
+絵柄は「線のアイコン」（Lucide / Tabler）と「塗りのピクトグラム」（Pinhead / Material Symbols / Tabler 塗り）の2系統です。Pinhead は人物の動作や情景（ベンチに座る人、桟橋で釣りをする人、踊る人など）を表すピクトグラムが豊富で、AIで情景を作るときに向いています。1つのアイコンの中で2系統を混ぜないのがおすすめです。
+
+MIT / ISC / Apache-2.0 は配布時に著作権表示とライセンス文を含めることを条件としているため、作ったアイコンを配布・同梱する場合は ZIP に入っている `CREDITS.txt`（または [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）を添えてください。
 
 ## APIキーの扱い
 
