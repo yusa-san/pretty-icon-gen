@@ -3,7 +3,8 @@ import {
   SHAPES, newComposition, newIconLayer, newShapeLayer, newTextLayer, renderSVG, layerMarkup,
   exportSVG, svgToPNGBlob, normalizeComposition, shapeElement, clone, uid,
 } from './compose.js';
-import { PROVIDERS, loadSettings, saveSettings, hasKey, aiGenerate, runPool, callLLM } from './ai.js';
+import { PROVIDERS, loadSettings, saveSettings, hasKey, aiVariants, aiPlan, runPool, callLLM } from './ai.js';
+import { BADGE_POSITIONS, normalizeGuide, describeGuide, applyStyleGuide } from './style.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -887,6 +888,41 @@ $('#btn-ai-test').onclick = async () => {
 };
 
 // ------------------------------------------------------------------ AI assist (editor)
+let assistVariants = [];
+
+function variantThumbHTML(v, i, selectedIdx) {
+  const cap = v.idea || v.comp.name;
+  return `<button type="button" class="vcard ${i === selectedIdx ? 'selected' : ''}" data-v="${i}" title="${escHTML(cap)}">
+    <span class="thumb">${renderSVG(v.comp)}</span><span class="cap">${escHTML(cap)}</span></button>`;
+}
+
+function renderAssistVariants() {
+  const el = $('#ai-variants');
+  el.hidden = !assistVariants.length;
+  const sel = assistVariants.findIndex((v) => v.active);
+  el.innerHTML = assistVariants.length
+    ? `<div class="hint">案をタップするとキャンバスに読み込みます</div><div class="variant-grid">${assistVariants.map((v, i) => variantThumbHTML(v, i, sel)).join('')}</div>`
+    : '';
+}
+
+function loadAssistVariant(i) {
+  const v = assistVariants[i];
+  if (!v) return;
+  assistVariants.forEach((x, j) => { x.active = j === i; });
+  const comp = clone(v.comp);
+  if (v.keepName) comp.name = v.keepName;
+  state.comp = comp;
+  if (v.mode === 'new') state.galleryId = null;
+  state.selectedId = null;
+  afterLoad();
+  record();
+  renderAssistVariants();
+}
+$('#ai-variants').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-v]');
+  if (b) loadAssistVariant(+b.dataset.v);
+});
+
 async function runAssist(mode) {
   const prompt = $('#ai-prompt').value.trim();
   const st = $('#ai-assist-status');
@@ -897,21 +933,19 @@ async function runAssist(mode) {
   buttons.forEach((b) => { b.disabled = true; });
   st.className = 'status';
   try {
-    const { comp, warnings } = await aiGenerate(state.ai, prompt, {
-      base: mode === 'edit' ? state.comp : null,
+    const base = mode === 'edit' ? clone(state.comp) : null;
+    const { variants } = await aiVariants(state.ai, {
+      request: mode === 'edit' ? (base.name || prompt) : prompt,
+      instruction: mode === 'edit' ? prompt : '',
+      base,
+      count: +$('#ai-count').value,
       onStatus: (s) => { st.textContent = s; },
     });
-    if (mode === 'edit') {
-      comp.name = state.comp.name || comp.name;
-      state.comp = comp;
-      state.selectedId = null;
-      afterLoad();
-      record();
-    } else {
-      loadComposition(comp);
-    }
+    assistVariants = variants.map((v) => ({ ...v, mode, keepName: mode === 'edit' ? base.name : null, active: false }));
+    loadAssistVariant(0);
+    const skipped = variants.reduce((a, v) => a + v.warnings.length, 0);
     st.className = 'status ok';
-    st.textContent = warnings.length ? `完了（${warnings.length}件のパーツを除外）` : '完了';
+    st.textContent = `${variants.length}案できました${variants.length > 1 ? '（下から選べます）' : ''}${skipped ? ` / ${skipped}件のパーツを除外` : ''}`;
   } catch (e) {
     st.className = 'status err';
     st.textContent = e.message;
@@ -923,114 +957,393 @@ $('#btn-ai-new').onclick = () => runAssist('new');
 $('#btn-ai-edit').onclick = () => runAssist('edit');
 
 // ------------------------------------------------------------------ AI batch
-const batch = { jobs: [], abort: null };
+// 流れ: ①依頼を書く → ②仕様（スタイルガイド＋各アイコンの解釈）を確認・修正 → ③複数案から選ぶ／派生させる
+const batch = {
+  step: 'input',
+  gf: null,         // スタイルガイドの編集用フラット表現
+  items: [],        // {id, request, name, concept, keywords[], question, variants[], selected, status, message, error, instruction, galleryId}
+  count: 3,
+  extra: '',
+  abort: null,
+  running: false,
+};
 $('#batch-bg').insertAdjacentHTML('beforeend', Object.entries(SHAPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join(''));
 
-function batchStyle(total) {
+// アイコンデータ読み込み後に組み立てる（先に作ると未知のアイコンとして除外されるため）
+const SAMPLE_DEFS = [
+  { layers: [{ type: 'icon', icon: 'lucide:mail', x: 46, y: 46, size: 52 }, { type: 'shape', shape: 'circle', x: 70, y: 70, size: 30, halo: 3 }, { type: 'icon', icon: 'lucide:clock', x: 70, y: 70, size: 18 }] },
+  { layers: [{ type: 'icon', icon: 'lucide:cloud', x: 46, y: 47, size: 54 }, { type: 'icon', icon: 'lucide:lock', x: 70, y: 70, size: 28, halo: 4 }] },
+  { layers: [{ type: 'icon', icon: 'lucide:user', x: 50, y: 50, size: 56 }] },
+];
+let sampleComps = null;
+const getSampleComps = () => (sampleComps ||= SAMPLE_DEFS.map((c) => normalizeComposition(c).comp));
+
+const fromGuide = (g, unify = true) => ({
+  shape: g.background.shape, bgColor: g.background.color, useGrad: !!g.background.color2, color2: g.background.color2 || '#ec4899',
+  iconColor: g.iconColor, accentColor: g.accentColor, badgeIconColor: g.badgeIconColor,
+  strokeWidth: g.strokeWidth, badgePosition: g.badgePosition, notes: g.notes, unify,
+});
+const toGuide = (f) => normalizeGuide({
+  background: { shape: f.shape, color: f.bgColor, color2: f.useGrad ? f.color2 : '' },
+  iconColor: f.iconColor, accentColor: f.accentColor, badgeIconColor: f.badgeIconColor,
+  strokeWidth: f.strokeWidth, badgePosition: f.badgePosition, notes: f.notes,
+});
+
+function batchPrefs() {
   const parts = [];
-  if (total > 1) parts.push(`This icon is one of a set of ${total} icons; keep the style consistent across the set.`);
   const bg = $('#batch-bg').value;
-  if (bg === 'none') parts.push('No background (background.shape = "none").');
-  else if (bg) parts.push(`Use background.shape = "${bg}".`);
-  if ($('#batch-use-color').checked) parts.push(`Main color: ${$('#batch-color').value} (derive a harmonious palette from it).`);
+  if (bg === 'none') parts.push('no background (transparent)');
+  else if (bg) parts.push(`background shape "${bg}"`);
+  if ($('#batch-use-color').checked) parts.push(`main color ${$('#batch-color').value}`);
   const sw = $('#batch-stroke').value;
-  if (sw) parts.push(`Use strokeWidth ${sw} for all icon layers.`);
+  if (sw) parts.push(`strokeWidth ${sw}`);
   const extra = $('#batch-style').value.trim();
   if (extra) parts.push(extra);
-  return parts.join(' ');
+  return parts.join('; ');
 }
 
-function jobCardHTML(job) {
-  const cls = job.status === 'done' ? '' : job.status === 'error' ? 'error' : 'pending';
-  const thumb = job.comp ? renderSVG(job.comp) : '';
-  const sub = job.status === 'error' ? escHTML(job.error) : job.status === 'done' ? escHTML(job.keywords?.join(', ') || '') : escHTML(job.message || '待機中');
-  return `<div class="card ${cls}" data-job="${job.id}">
-    <div class="thumb">${thumb}</div>
-    <div class="title" title="${escHTML(job.text)}">${escHTML(job.comp?.name || job.text)}</div>
-    <div class="sub" title="${sub}">${sub}</div>
-    <div class="actions">
-      ${job.comp ? '<button class="btn primary" data-act="edit">編集</button><button class="btn" data-act="svg">SVG</button><button class="btn" data-act="save">保存</button>' : ''}
-      ${job.status === 'done' || job.status === 'error' ? '<button class="btn" data-act="retry">再生成</button>' : ''}
-    </div></div>`;
+/** 左フォームの明示的な希望をスタイルガイドに上書き */
+function applyPrefsToGuide(g) {
+  const bg = $('#batch-bg').value;
+  if (bg) g.background.shape = bg;
+  if ($('#batch-use-color').checked) {
+    if (g.background.shape === 'none') g.iconColor = $('#batch-color').value;
+    else g.background.color = $('#batch-color').value;
+  }
+  if ($('#batch-stroke').value) g.strokeWidth = +$('#batch-stroke').value;
+  if (g.background.shape === 'none' && g.iconColor.toLowerCase() === '#ffffff') g.iconColor = '#1f2937';
+  return normalizeGuide(g);
 }
-function renderJob(job) {
-  const el = $(`[data-job="${job.id}"]`);
-  if (el) el.outerHTML = jobCardHTML(job);
+
+function readLines() {
+  return $('#batch-input').value.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function setBatchStep(step) {
+  batch.step = step;
+  const order = ['input', 'plan', 'results'];
+  $$('#batch-steps li').forEach((li) => {
+    li.classList.toggle('active', li.dataset.step === step);
+    li.classList.toggle('done', order.indexOf(li.dataset.step) < order.indexOf(step));
+  });
+  renderBatchMain();
+  // スマホではフォームの下に表示されるので、そこまでスクロール
+  if (isMobile() && step !== 'input') $('#batch-main').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function setBatchRunning(on) {
+  batch.running = on;
+  $('#btn-batch-plan').disabled = on;
+  $('#btn-batch-quick').disabled = on;
+  $('#btn-batch-stop').disabled = !on;
+  const gen = $('#btn-plan-generate');
+  if (gen) gen.disabled = on;
+}
+
+function renderBatchMain() {
+  const el = $('#batch-main');
+  if (batch.step === 'plan') return renderPlanEditor(el);
+  if (batch.step === 'results') return renderResults(el);
+  el.innerHTML = '<p class="hint">左で依頼を書いて「仕様を作成」を押すと、AIがセット全体のスタイルと各アイコンの解釈を提案します。確認・修正してから生成できます。</p>';
+}
+
+// ---- ② 仕様の確認
+const GUIDE_FIELDS = [
+  { k: 'shape', label: '背景の形', type: 'select', options: { none: 'なし（透明）', ...SHAPES } },
+  { k: 'bgColor', label: '背景色', type: 'color' },
+  { k: 'useGrad', label: 'グラデーション', type: 'check' },
+  { k: 'color2', label: 'グラデ終点', type: 'color' },
+  { k: 'iconColor', label: 'メインの色', type: 'color' },
+  { k: 'accentColor', label: 'アクセント色', type: 'color' },
+  { k: 'badgeIconColor', label: 'バッジ上の色', type: 'color' },
+  { k: 'strokeWidth', label: '線の太さ', type: 'range', min: 1, max: 3.5, step: 0.25 },
+  { k: 'badgePosition', label: 'バッジ位置', type: 'select', options: BADGE_POSITIONS },
+  { k: 'notes', label: 'メモ', type: 'text', max: 300 },
+  { k: 'unify', label: '自動で揃える', type: 'check' },
+].map((f) => ({ ...f, scope: 'guide' }));
+
+function renderGuidePreview() {
+  const box = $('#guide-preview');
+  if (!box || !batch.gf) return;
+  const g = toGuide(batch.gf);
+  box.innerHTML = getSampleComps().map((c) => `<span class="thumb">${renderSVG(batch.gf.unify ? applyStyleGuide(c, g) : c)}</span>`).join('');
+}
+
+function renderPlanEditor(el) {
+  const n = batch.items.length;
+  el.innerHTML = `
+    <div class="row space"><h2>仕様の確認</h2><span class="hint">内容を直してから生成できます</span></div>
+    <div class="guide-box">
+      <div>
+        <div class="hint">スタイルのプレビュー</div>
+        <div id="guide-preview" class="guide-preview"></div>
+        <p class="hint small">「自動で揃える」がオンだと、AIの出力後に背景・色・線の太さ・バッジ位置をこのガイドに合わせて補正します。</p>
+      </div>
+      <div id="guide-props" class="props">${GUIDE_FIELDS.map((f) => fieldHTML(f, batch.gf)).join('')}</div>
+    </div>
+    <h3>各アイコンの解釈（${n}件）</h3>
+    <ol class="plan-items">${batch.items.map((it, i) => `
+      <li data-idx="${i}">
+        <div class="row space"><span class="plan-req">依頼: ${escHTML(it.request)}</span>
+          <button type="button" class="btn tiny danger" data-act="remove" title="この件を外す">✕</button></div>
+        ${it.question ? `<p class="plan-q">確認: ${escHTML(it.question)}</p>` : ''}
+        <label>名前<input type="text" data-f="name" value="${escHTML(it.name)}" maxlength="40"></label>
+        <label>内容（モチーフとバッジ）<textarea data-f="concept" rows="2" maxlength="200">${escHTML(it.concept)}</textarea></label>
+        <label>検索語（英語・カンマ区切り。空ならAIが考えます）<input type="text" data-f="keywords" value="${escHTML(it.keywords.join(', '))}"></label>
+      </li>`).join('')}
+    </ol>
+    <div class="row">
+      <button id="btn-plan-generate" class="btn primary" ${n ? '' : 'disabled'}>この仕様で生成（${n}件 × ${batch.count}案）</button>
+      <button id="btn-plan-redo" class="btn">仕様を作り直す</button>
+    </div>`;
+  bindForm($('#guide-props'), () => batch.gf, GUIDE_FIELDS, (k) => {
+    if (k === 'useGrad') $('#guide-props [data-k="color2"]').disabled = !batch.gf.useGrad;
+    renderGuidePreview();
+  });
+  $('#guide-props [data-k="color2"]').disabled = !batch.gf.useGrad;
+  renderGuidePreview();
+  $('.plan-items', el).addEventListener('input', (e) => {
+    const li = e.target.closest('[data-idx]');
+    const f = e.target.dataset.f;
+    if (!li || !f) return;
+    const it = batch.items[+li.dataset.idx];
+    it[f] = f === 'keywords' ? e.target.value.split(/[,、，]/).map((s) => s.trim()).filter(Boolean) : e.target.value;
+  });
+  $('.plan-items', el).addEventListener('click', (e) => {
+    const li = e.target.closest('[data-idx]');
+    if (li && e.target.closest('[data-act="remove"]')) {
+      batch.items.splice(+li.dataset.idx, 1);
+      renderPlanEditor(el);
+    }
+  });
+  $('#btn-plan-generate').onclick = () => generateAll();
+  $('#btn-plan-redo').onclick = () => $('#btn-batch-plan').click();
+  setBatchRunning(batch.running);
+}
+
+// ---- ③ 結果（複数案から選ぶ）
+function selectedComps() {
+  return batch.items.filter((it) => it.variants[it.selected]).map((it) => it.variants[it.selected].comp);
+}
+
+function itemHTML(it, i) {
+  const sel = it.selected;
+  const pending = it.status === 'running' || it.status === 'pending';
+  const placeholders = pending && !it.variants.length
+    ? Array.from({ length: batch.count }, () => '<span class="vcard placeholder"><span class="thumb"></span><span class="cap">&nbsp;</span></span>').join('')
+    : '';
+  const status = it.status === 'error' ? `<span class="status err">${escHTML(it.error)}</span>`
+    : pending ? `<span class="status" data-role="msg">${escHTML(it.message || '待機中')}</span>` : '';
+  const has = !!it.variants[sel];
+  return `<section class="ritem ${pending ? 'pending' : ''}" data-idx="${i}">
+    <div class="ritem-head">
+      <strong>${escHTML(it.name)}</strong>
+      <span class="hint">${escHTML(it.concept)}</span>
+      ${status}
+    </div>
+    <div class="variant-grid">${it.variants.map((v, j) => variantThumbHTML(v, j, sel)).join('')}${placeholders}</div>
+    <div class="ritem-actions">
+      <input type="text" data-f="instruction" value="${escHTML(it.instruction || '')}" placeholder="派生・修正の指示（任意）例: 時計を砂時計に">
+      <div class="row">
+        <button type="button" class="btn" data-act="derive" ${has && !pending ? '' : 'disabled'} title="選んだ案をもとに、近い方向の案を追加で出します">選んだ案から派生</button>
+        <button type="button" class="btn" data-act="regen" ${pending ? 'disabled' : ''}>作り直す</button>
+        <button type="button" class="btn primary" data-act="edit" ${has ? '' : 'disabled'}>エディタで編集</button>
+        <button type="button" class="btn" data-act="svg" ${has ? '' : 'disabled'}>SVG</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+function renderResults(el) {
+  const g = toGuide(batch.gf);
+  const sw = (c) => `<span class="swatch static" style="background:${c}" title="${c}"></span>`;
+  el.innerHTML = `
+    <div class="row space">
+      <h2>案を選ぶ</h2>
+      <div class="row">
+        <button id="btn-back-plan" class="btn ghost">仕様に戻る</button>
+        <button id="btn-batch-zip" class="btn">選んだ案をZIP</button>
+        <button id="btn-batch-save" class="btn">選んだ案をギャラリーへ</button>
+      </div>
+    </div>
+    <div class="guide-summary">
+      <span class="hint">スタイル:</span> ${SHAPES[g.background.shape] || 'なし'} ${sw(g.background.color)}${g.background.color2 ? sw(g.background.color2) : ''}
+      <span class="hint">メイン</span>${sw(g.iconColor)} <span class="hint">アクセント</span>${sw(g.accentColor)}
+      <span class="hint">線 ${g.strokeWidth} / バッジ ${BADGE_POSITIONS[g.badgePosition]} / ${batch.gf.unify ? '自動補正オン' : '自動補正オフ'}</span>
+    </div>
+    <p class="hint">各アイコンの案をクリックして選んでください。選んだ案が書き出し・保存の対象になります。</p>
+    <div class="result-items">${batch.items.map(itemHTML).join('')}</div>`;
+  $('#btn-back-plan').onclick = () => setBatchStep('plan');
+  $('#btn-batch-zip').onclick = () => zipCompositions(selectedComps(), 'ai-icons.zip');
+  $('#btn-batch-save').onclick = () => {
+    const items = batch.items.filter((it) => it.variants[it.selected]);
+    items.forEach((it) => { it.galleryId = saveToGallery(it.variants[it.selected].comp, it.galleryId); });
+    toast(`${items.length}件をギャラリーに保存しました`);
+  };
+  updateBatchButtons();
+}
+
+function renderItem(it) {
+  const i = batch.items.indexOf(it);
+  const el = $(`#batch-main .ritem[data-idx="${i}"]`);
+  if (el) el.outerHTML = itemHTML(it, i);
+  updateBatchButtons();
+}
+function renderItemMessage(it) {
+  const el = $(`#batch-main .ritem[data-idx="${batch.items.indexOf(it)}"] [data-role="msg"]`);
+  if (el) el.textContent = it.message;
 }
 function updateBatchButtons() {
-  const done = batch.jobs.filter((j) => j.comp);
-  $('#btn-batch-zip').disabled = !done.length;
-  $('#btn-batch-save').disabled = !done.length;
+  const any = batch.items.some((it) => it.variants[it.selected]);
+  ['#btn-batch-zip', '#btn-batch-save'].forEach((s) => { const b = $(s); if (b) b.disabled = !any; });
 }
 
-async function runJob(job, style, signal) {
-  job.status = 'running';
-  job.message = '開始…';
-  job.error = null;
-  renderJob(job);
+function styleTextFor() {
+  let t = describeGuide(toGuide(batch.gf));
+  if (batch.items.length > 1) t += `\nThis icon is one of a set of ${batch.items.length} icons; keep the style consistent across the set.`;
+  if (batch.extra) t += `\nAdditional style wishes: ${batch.extra}`;
+  return t;
+}
+
+async function runItem(it, mode, signal) {
+  const base = mode === 'derive' ? it.variants[it.selected]?.comp : null;
+  it.status = 'running';
+  it.message = mode === 'derive' ? '派生案を作成中…' : '開始…';
+  it.error = null;
+  if (mode !== 'derive') { it.variants = []; it.selected = 0; }
+  renderItem(it);
   try {
-    const r = await aiGenerate(state.ai, job.text, {
-      style, signal, onStatus: (m) => { job.message = m; renderJob(job); },
+    const guide = toGuide(batch.gf);
+    const r = await aiVariants(state.ai, {
+      request: it.request,
+      concept: it.concept,
+      keywords: it.keywords,
+      styleText: styleTextFor(),
+      base,
+      instruction: mode === 'derive' ? (it.instruction || '').trim() : '',
+      count: batch.count,
+      signal,
+      onStatus: (m) => { it.message = m; renderItemMessage(it); },
     });
-    job.comp = r.comp;
-    job.keywords = r.keywords;
-    job.status = 'done';
+    if (!it.keywords.length) it.keywords = r.keywords;
+    const vs = r.variants.map((v) => {
+      const comp = batch.gf.unify ? applyStyleGuide(v.comp, guide) : v.comp;
+      comp.name = it.name || comp.name;
+      return { comp, idea: v.idea };
+    });
+    if (mode === 'derive') {
+      it.variants.push(...vs);
+      it.selected = it.variants.length - vs.length; // 新しい最初の案を選択
+    } else {
+      it.variants = vs;
+      it.selected = 0;
+    }
+    it.status = 'done';
   } catch (e) {
-    job.status = 'error';
-    job.error = e.name === 'AbortError' ? '中止しました' : e.message;
+    it.status = 'error';
+    it.error = e.name === 'AbortError' ? '中止しました' : e.message;
   }
-  renderJob(job);
-  updateBatchButtons();
+  renderItem(it);
 }
 
-$('#btn-batch-run').onclick = async () => {
-  const lines = $('#batch-input').value.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (!lines.length) return $('#batch-input').focus();
+async function generateAll() {
   if (!hasKey(state.ai)) { $('#btn-ai-settings').click(); return; }
-  if (lines.length > 50) return toast('一度に発注できるのは50件までです', true);
-  const style = batchStyle(lines.length);
-  batch.jobs = lines.map((text, i) => ({ id: `j${Date.now()}${i}`, text, status: 'pending' }));
-  $('#batch-results').innerHTML = batch.jobs.map(jobCardHTML).join('');
+  if (!batch.items.length) return;
+  batch.items.forEach((it) => Object.assign(it, { status: 'pending', message: '待機中', variants: [], selected: 0, error: null }));
+  setBatchStep('results');
   batch.abort = new AbortController();
-  $('#btn-batch-run').disabled = true;
-  $('#btn-batch-stop').disabled = false;
-  updateBatchButtons();
+  setBatchRunning(true);
   const st = $('#batch-status');
   st.className = 'status';
   let finished = 0;
-  st.textContent = `0 / ${lines.length}`;
-  await runPool(batch.jobs, +$('#batch-concurrency').value, async (job) => {
-    if (batch.abort.signal.aborted) { job.status = 'error'; job.error = '中止しました'; renderJob(job); return; }
-    await runJob(job, style, batch.abort.signal);
-    st.textContent = `${++finished} / ${lines.length}`;
+  const total = batch.items.length;
+  st.textContent = `生成中 0 / ${total}`;
+  await runPool([...batch.items], +$('#batch-concurrency').value, async (it) => {
+    if (batch.abort.signal.aborted) { it.status = 'error'; it.error = '中止しました'; renderItem(it); return; }
+    await runItem(it, 'gen', batch.abort.signal);
+    st.textContent = `生成中 ${++finished} / ${total}`;
   });
-  const ok = batch.jobs.filter((j) => j.status === 'done').length;
-  st.className = ok === lines.length ? 'status ok' : 'status';
-  st.textContent = `完了: ${ok} / ${lines.length}件 成功`;
-  $('#btn-batch-run').disabled = false;
-  $('#btn-batch-stop').disabled = true;
+  const ok = batch.items.filter((it) => it.status === 'done').length;
+  st.className = ok === total ? 'status ok' : 'status';
+  st.textContent = `完了: ${ok} / ${total}件`;
+  setBatchRunning(false);
+}
+
+const newItem = (p) => ({
+  id: uid(), name: p.request.slice(0, 40), concept: p.request, keywords: [], question: '', ...p,
+  variants: [], selected: 0, status: 'idle', message: '', error: null, instruction: '', galleryId: null,
+});
+
+function readBatchOptions() {
+  const lines = readLines();
+  if (!lines.length) { $('#batch-input').focus(); return null; }
+  if (!hasKey(state.ai)) { $('#btn-ai-settings').click(); return null; }
+  if (lines.length > 50) { toast('一度に発注できるのは50件までです', true); return null; }
+  batch.count = +$('#batch-count').value;
+  batch.extra = $('#batch-style').value.trim();
+  return lines;
+}
+
+$('#btn-batch-plan').onclick = async () => {
+  const lines = readBatchOptions();
+  if (!lines) return;
+  const st = $('#batch-status');
+  st.className = 'status';
+  st.textContent = '仕様を作成中…';
+  batch.abort = new AbortController();
+  setBatchRunning(true);
+  try {
+    const plan = await aiPlan(state.ai, lines, batchPrefs(), batch.abort.signal);
+    const guide = applyPrefsToGuide(normalizeGuide(plan.styleGuide));
+    batch.gf = fromGuide(guide, true);
+    batch.items = plan.items.map(newItem);
+    const qs = batch.items.filter((it) => it.question).length;
+    st.className = 'status ok';
+    st.textContent = `仕様ができました。右で確認してください${qs ? `（確認事項 ${qs}件）` : ''}`;
+    setBatchRunning(false);
+    setBatchStep('plan');
+  } catch (e) {
+    st.className = 'status err';
+    st.textContent = e.name === 'AbortError' ? '中止しました' : e.message;
+    setBatchRunning(false);
+  }
 };
+
+$('#btn-batch-quick').onclick = () => {
+  const lines = readBatchOptions();
+  if (!lines) return;
+  batch.gf = fromGuide(applyPrefsToGuide(normalizeGuide({})), true);
+  batch.items = lines.map((request) => newItem({ request }));
+  generateAll();
+};
+
 $('#btn-batch-stop').onclick = () => { batch.abort?.abort(); };
-$('#batch-results').addEventListener('click', async (e) => {
-  const card = e.target.closest('[data-job]');
+
+$('#batch-main').addEventListener('input', (e) => {
+  if (batch.step !== 'results' || e.target.dataset.f !== 'instruction') return;
+  const sec = e.target.closest('.ritem');
+  if (sec) batch.items[+sec.dataset.idx].instruction = e.target.value;
+});
+$('#batch-main').addEventListener('click', async (e) => {
+  if (batch.step !== 'results') return;
+  const sec = e.target.closest('.ritem');
+  if (!sec) return;
+  const it = batch.items[+sec.dataset.idx];
+  const card = e.target.closest('[data-v]');
+  if (card) {
+    it.selected = +card.dataset.v;
+    $$('.vcard', sec).forEach((c) => c.classList.toggle('selected', c === card));
+    return;
+  }
   const act = e.target.closest('[data-act]')?.dataset.act;
-  if (!card || !act) return;
-  const job = batch.jobs.find((j) => j.id === card.dataset.job);
-  if (!job) return;
-  if (act === 'edit') { loadComposition(job.comp); switchTab('editor'); }
-  if (act === 'svg') downloadBlob(new Blob([exportSVG(job.comp, exportSize())], { type: 'image/svg+xml' }), `${safeName(job.comp.name)}.svg`);
-  if (act === 'save') { job.galleryId = saveToGallery(job.comp, job.galleryId); toast('ギャラリーに保存しました'); }
-  if (act === 'retry') {
+  const v = it.variants[it.selected];
+  if (act === 'edit' && v) { loadComposition(v.comp); switchTab('editor'); }
+  if (act === 'svg' && v) downloadBlob(new Blob([exportSVG(v.comp, exportSize())], { type: 'image/svg+xml' }), `${safeName(v.comp.name)}.svg`);
+  if (act === 'derive' || act === 'regen') {
     if (!hasKey(state.ai)) return $('#btn-ai-settings').click();
-    await runJob(job, batchStyle(batch.jobs.length), new AbortController().signal);
+    await runItem(it, act === 'derive' ? 'derive' : 'gen', new AbortController().signal);
   }
 });
-$('#btn-batch-zip').onclick = () => zipCompositions(batch.jobs.filter((j) => j.comp).map((j) => j.comp), 'ai-icons.zip');
-$('#btn-batch-save').onclick = () => {
-  const done = batch.jobs.filter((j) => j.comp);
-  done.forEach((j) => { j.galleryId = saveToGallery(j.comp, j.galleryId); });
-  toast(`${done.length}件をギャラリーに保存しました`);
-};
 
 // ------------------------------------------------------------------ init
 async function init() {
