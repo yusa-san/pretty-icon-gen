@@ -1,0 +1,16 @@
+{
+  "name": "pretty-icon-gen",
+  "private": true,
+  "version": "1.0.0",
+  "description": "SVG icon collage maker (static site for GitHub Pages)",
+  "type": "module",
+  "scripts": {
+    "build:icons": "node scripts/build-icons.mjs",
+    "serve": "npx --yes http-server -p 8080 -c-1 ."
+  },
+  "devDependencies": {
+    "@tabler/icons": "3.50.0",
+    "jszip": "^3.10.1",
+    "lucide-static": "1.69.0"
+  }
+}
