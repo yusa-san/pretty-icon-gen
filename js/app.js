@@ -1182,7 +1182,7 @@ function renderPlanEditor(el) {
         ${it.question ? `<p class="plan-q">確認: ${escHTML(it.question)}</p>` : ''}
         <label>名前<input type="text" data-f="name" value="${escHTML(it.name)}" maxlength="40"></label>
         <label>内容（モチーフとバッジ）<textarea data-f="concept" rows="2" maxlength="200">${escHTML(it.concept)}</textarea></label>
-        <label>参考アイコンの検索語（英語・カンマ区切り・任意）<input type="text" data-f="keywords" value="${escHTML(it.keywords.join(', '))}"></label>
+        <label>アイコンで使う部品（英語の検索語・カンマ区切り。空ならAIが探します）<input type="text" data-f="keywords" value="${escHTML(it.keywords.join(', '))}"></label>
       </li>`).join('')}
     </ol>
     <div class="row">
@@ -1321,6 +1321,8 @@ async function runItem(it, mode, signal) {
       signal,
       onStatus: (m) => { it.message = m; renderItemMessage(it); },
     });
+    // 見つけた部品は覚えておき、派生・作り直しで再利用する
+    if (!it.keywords.length && r.keywords?.length) it.keywords = r.keywords;
     const vs = r.variants.map((v) => {
       const comp = batch.gf.unify ? applyStyleGuide(v.comp, guide) : v.comp;
       comp.name = it.name || comp.name;

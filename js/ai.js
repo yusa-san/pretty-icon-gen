@@ -224,16 +224,18 @@ const obj = (properties, required) => ({ type: 'object', properties, required, a
 const BACKGROUND_SCHEMA = obj({ shape: STR, color: STR, color2: STR }, ['shape', 'color', 'color2']);
 const LAYER_SCHEMA = obj({
   type: { type: 'string', enum: ['draw', 'icon', 'shape', 'text'] },
+  role: { type: 'string', enum: ['main', 'detail', 'badge'] },
   markup: STR, icon: STR, shape: STR, text: STR,
   x: NUM, y: NUM, size: NUM, rotate: NUM,
   color: STR, strokeWidth: NUM, outline: NUM, halo: NUM, haloColor: STR, weight: NUM,
   flipX: { type: 'boolean' }, flipY: { type: 'boolean' },
-}, ['type']);
+}, ['type', 'role']);
 const VARIANT_PROPS = { name: STR, idea: STR, background: BACKGROUND_SCHEMA, layers: { type: 'array', items: LAYER_SCHEMA } };
 const VARIANTS_SCHEMA = obj({ variants: { type: 'array', items: obj(VARIANT_PROPS, ['name', 'idea', 'background', 'layers']) } }, ['variants']);
 const REVIEW_SCHEMA = obj({
   variants: { type: 'array', items: obj({ seen: STR, problems: STR, ...VARIANT_PROPS }, ['seen', 'problems', 'name', 'idea', 'background', 'layers']) },
 }, ['variants']);
+const PARTS_SCHEMA = obj({ parts: { type: 'array', items: obj({ name: STR, keywords: { type: 'array', items: STR } }, ['name', 'keywords']) } }, ['parts']);
 const PLAN_SCHEMA = obj({
   styleGuide: obj({
     background: BACKGROUND_SCHEMA, iconColor: STR, accentColor: STR, badgeIconColor: STR,
@@ -244,7 +246,7 @@ const PLAN_SCHEMA = obj({
 
 // ---------- プロンプト ----------
 
-const PLAN_SYSTEM = `You are the art director for a set of icons. Each icon will be drawn as SVG on a 100x100 canvas by a designer (who may draw shapes directly or adapt open-source line icons).
+const PLAN_SYSTEM = `You are the art director for a set of icons. Each icon is built on a 100x100 canvas by MIXING open-source line icons (Lucide / Tabler: furniture, objects, devices, nature, symbols, speech bubbles, confetti, waves, simple person figures...) with a few hand-drawn SVG lines for what the library lacks (specific poses, ground/shore lines, connections).
 You receive a list of icon requests (often in Japanese) and optional style preferences.
 Produce:
 1) One style guide for the whole set so the icons look consistent.
@@ -262,61 +264,67 @@ Respond with JSON only:
   "notes": "short Japanese notes about the visual direction"
  },
  "items": [
-  {"name": "short Japanese name", "concept": "Japanese description of exactly what to draw and WHERE: every element with its count, pose/orientation and position on the canvas (e.g. 中央やや左に立っている人物1人（横向き・水辺を見ている）、足元に岸の線、その下（下3分の1）に波線2本。人物と波は重ねない), plus any badge", "keywords": ["english", "keywords", "for", "reference", "icons"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
+  {"name": "short Japanese name", "concept": "Japanese description of exactly what to show and WHERE: every element with its count, pose/orientation and position on the canvas, and for each element whether it comes from an icon (アイコン) or is hand-drawn (手描き). e.g. 中央左に椅子（アイコン: armchair）、そこに座る人物1人（手描き・右向き）、足元に岸の線（手描き）、下3分の1に波（アイコン: waves）。人物と波は重ねない", "keywords": ["one or two English icon-search words for EACH element that should come from the icon library, e.g. armchair, chair, waves, confetti, speech bubble"], "question": "only if the request is genuinely ambiguous: a short Japanese note on the interpretation you chose and the alternative; otherwise empty"}
  ]
 }
 Rules:
-- items must have exactly one entry per request, in order. 3-8 keywords each (English, icon-library vocabulary).
-- Think about what makes each request recognizable AND what distinguishes it from the other items in the set (e.g. number of people, posture, mood). Make those differences explicit and obvious in the concepts, and keep shared elements (e.g. the same water/shore treatment) identical across items.
-- Icons are tiny: prefer simple pictogram-style scenes with few, large elements over detailed illustrations.
+- items must have exactly one entry per request, in order.
+- Prefer library icons for concrete objects (they look much better than hand-drawn ones); plan hand-drawing only for what icons cannot express.
+- Think about what makes each request recognizable AND what distinguishes it from the other items in the set (e.g. number of people, posture, mood). Make those differences explicit and obvious, and keep shared elements (e.g. the same water/shore treatment) identical across items.
+- Icons are tiny: few, large, simple elements.
 - Honor the user's style preferences when given.`;
 
-const VARIANTS_SYSTEM = `You are a skilled icon designer who draws SVG icons by hand. You design icons on a 100x100 canvas.
+const PARTS_SYSTEM = `You help build an icon by combining open-source line icons (Lucide / Tabler) with a few hand-drawn lines.
+Given the request (often in Japanese), list the concrete objects/elements that could come from an icon library, each with 1-3 English search words in icon-library vocabulary (e.g. 椅子 → armchair, chair; 波 → waves; 会話 → message, speech; お祝い → confetti, party).
+Include alternatives for the main subject. Skip things that only make sense hand-drawn (specific poses, ground lines).
+Respond with JSON only: {"parts":[{"name":"Japanese name","keywords":["english","words"]}]}`;
 
-You produce a composition made of layers (drawn in array order, first = bottom):
-- {"type":"draw","markup":"<path .../><circle .../>"}  ← YOUR MAIN TOOL. Raw SVG elements drawn directly in canvas coordinates (0..100, origin top-left).
+const VARIANTS_SYSTEM = `You are a skilled icon designer. You build icons on a 100x100 canvas by MIXING library icons with your own SVG drawing.
+
+Layers (drawn in array order, first = bottom). Every layer has "role": "main" (core motif), "detail" (other scene elements) or "badge" (small corner modifier).
+- {"type":"icon","role":"main","icon":"<candidate id>","x":50,"y":50,"size":60,"rotate":0,"flipX":false,"color":"#hex","strokeWidth":2,"halo":0,"haloColor":"#hex"}
+  A library icon (24x24 source). x,y = center of its box, size = box width/height. You can scale, rotate, flip and recolor it.
+- {"type":"draw","role":"detail","markup":"<path d='...'/>"}  Your own SVG drawn directly in canvas coordinates (0..100, origin top-left).
   Write SVG attributes with SINGLE quotes inside markup (e.g. <path d='M10 10 L20 20' fill='none'/>) so the JSON string stays valid.
   Allowed elements: g, path, circle, ellipse, rect, line, polyline, polygon. Allowed attributes: geometry, fill, stroke, stroke-width, stroke-linecap, stroke-linejoin, fill-rule, opacity, transform. No gradients, filters, text, images or url(...).
-  You may split the design into several draw layers (e.g. main motif, badge) so the user can move them separately.
-- {"type":"icon","icon":"<reference icon id>","x":50,"y":50,"size":60,"color":"#hex","strokeWidth":2,"halo":0,"haloColor":"#hex"}  Places a library icon as-is (x,y = center, size = box size; source is 24x24). Use only when a reference icon fits perfectly unchanged.
-- {"type":"shape","shape":"${Object.keys(SHAPES).join('|')}","x":..,"y":..,"size":..,"color":"#hex","outline":0,"halo":0,"haloColor":"#hex"}
-- {"type":"text","text":"AB","x":..,"y":..,"size":..,"color":"#hex","weight":700}  (max ~3 characters; avoid unless asked)
+- {"type":"shape","role":"badge","shape":"${Object.keys(SHAPES).join('|')}","x":..,"y":..,"size":..,"color":"#hex","outline":0,"halo":0,"haloColor":"#hex"}
+- {"type":"text","role":"detail","text":"AB","x":..,"y":..,"size":..,"color":"#hex","weight":700}  (max ~3 characters; avoid unless asked)
 
 Background: {"shape":"none|${Object.keys(SHAPES).join('|')}","color":"#hex","color2":"#hex or empty"}
 
-How to draw well:
-- Think about the request first: what must the viewer recognize instantly? Draw exactly that, with the few details that make it unambiguous.
-- Plan the layout before writing SVG: decide where each element goes (coordinates) so that elements do NOT overlap unless intended. Never stack unrelated icons on top of each other.
-- Reference icons (24x24, with their SVG) are optional. For objects, you may copy their paths into a draw layer and adapt them: scale them with transform="translate(tx ty) scale(k)" (k ≈ desired size / 24), modify or combine paths, remove parts, add details. Do not invent icon ids.
-- Scenes with people or situations: draw your own simple pictogram people (like public signage): a solid circle head and a simple body (rounded torso, limbs as thick round-capped lines). Show the exact number of people requested, their posture (standing, sitting, arms raised...) and orientation (facing each other when talking). Put them on a ground/shore line; put environment elements (e.g. water as 2-3 wavy lines) beside or below them, not through them. Use size and spacing to convey mood (alone = one small figure with empty space; lively = several figures, raised arms, a few confetti/notes).
-- Line style (default): fill="none", stroke color, stroke-linecap="round", stroke-linejoin="round". Inside a transform with scale k, use stroke-width ≈ desired visual width / k. Visual line width in canvas units should be about (style strokeWidth × 2.2), e.g. strokeWidth 2 → ~4.5 units, consistently across the icon.
-- Keep the main motif within about 18..82 (with a background shape) or 8..92 (no background). Badges: about 26-34 units, in the requested corner, usually a filled accent circle with a small white glyph, separated from the motif by a ring in the background color (draw a slightly larger circle in the background color first).
-- Simple, bold, legible at 24px. Avoid tiny details and thin hairlines.
-- Follow the style guide colors exactly.
+How to build it:
+- Think first: what must the viewer recognize instantly? Show exactly that, with the few details that make it unambiguous.
+- USE LIBRARY ICONS for concrete objects (furniture, devices, vehicles, buildings, plants, food, tools, symbols, speech bubbles, confetti, waves, ...) whenever a candidate fits — they look far better than hand-drawn versions. Candidates are grouped by the element they were found for.
+- DRAW BY HAND only what the library cannot provide: people in a specific pose or interaction (e.g. a pictogram person sitting on the chair icon: solid circle head, torso and limbs as thick round-capped lines), ground/shore lines spanning the scene, connecting lines, small custom details. You may also copy a candidate's paths into a draw layer to modify it (scale with transform='translate(tx ty) scale(k)', k = size/24).
+- Fit the pieces together: e.g. a hand-drawn person must actually sit on/stand next to the icon, aligned to its seat or edge; nothing important may overlap unless intended. Plan coordinates before writing.
+- One visual style: same color family and the SAME visual line width everywhere. An icon layer's visual line width = strokeWidth × size / 24 canvas units (size 48, strokeWidth 2 → 4 units); draw your lines with that same width, round caps/joins, fill='none' for line parts.
+- Keep the main content within about 18..82 (with a background shape) or 8..92 (no background). Badges: about 26-34 units in the requested corner, usually a filled accent circle with a small white glyph and a ring in the background color.
+- Simple, bold, legible at 24px. Follow the style guide colors.
 
-When asked for several variants, make them meaningfully different (different metaphor, viewpoint, composition or badge) — not just color changes.
+When asked for several variants, make them meaningfully different (different metaphor, icon choice, composition or badge) — not just color changes.
 
 Respond with JSON only: {"variants":[{"name":"short Japanese name","idea":"one short Japanese sentence describing this variant","background":{...},"layers":[...]}]}`;
 
-const REVIEW_SYSTEM = `You are a strict icon art director reviewing drafts drawn as SVG on a 100x100 canvas.
+const REVIEW_SYSTEM = `You are a strict icon art director reviewing drafts built on a 100x100 canvas from library icons and hand-drawn SVG.
 The attached image shows the drafts side by side, numbered 1, 2, 3... from left to right (each rendered as it would look as an icon).
 For EACH draft:
 1. "seen": in a few Japanese words, what a first-time viewer would actually recognize at small size (be honest, not what was intended).
-2. "problems": short Japanese list of problems against the request — e.g. wrong number of people, unclear posture, elements overlapping or stacked illegibly, parts cut off or touching the edge, too small/thin to read, poor contrast, looks like something else.
-3. Output a corrected design that fixes every problem. You may redraw substantially (rewrite the draw markup) — the goal is that the corrected icon clearly reads as the request. Keep each draft's distinct idea, and keep the style guide colors.
-The composition format is the same as the drafts' JSON (layers of type draw / icon / shape / text, canvas 0..100; for draw layers write markup in canvas coordinates with no x/y/size).
+2. "problems": short Japanese list of problems against the request — e.g. wrong number of people, unclear posture, pieces not fitting together (a person floating instead of sitting on the chair), elements overlapping illegibly, parts cut off, inconsistent line widths, too small/thin, poor contrast, a hand-drawn object that looks bad although a library icon exists.
+3. Output a corrected design that fixes every problem. Replace badly hand-drawn objects with candidate icons (ids listed below), adjust positions/sizes so pieces fit, redraw hand-drawn parts as needed. Keep each draft's distinct idea and the style guide colors.
+The composition format is the same as the drafts' JSON (layers with "role"; icon layers use x/y/size; draw layers use markup in canvas coordinates with no x/y/size).
 Respond with JSON only: {"variants":[{"seen":"...","problems":"...","name":"...","idea":"...","background":{...},"layers":[...]}]} — same number and order as the drafts.`;
 
 /**
  * 見直し（AI 1回）: 描いた案を画像で見せ、何に見えるか・問題点を挙げさせて修正版を出させる
  * @param {string} sheetImage 案を横に並べたPNG（base64）
  */
-export async function aiReview(settings, { request, concept = '', styleText = '', variants, sheetImage, signal }) {
+export async function aiReview(settings, { request, concept = '', styleText = '', variants, sheetImage, refsText = '', signal }) {
   let user = `Request: ${request}\n`;
   if (concept && concept !== request) user += `Agreed interpretation: ${concept}\n`;
   if (styleText) user += `${styleText}\n`;
   user += `\nDrafts (${variants.length}), in the same order as in the image:\n`;
   variants.forEach((v, i) => { user += `${i + 1}. ${JSON.stringify(compactComposition(v.comp))}\n`; });
+  if (refsText) user += `\n${refsText}`;
   const raw = await askJSON(settings, REVIEW_SYSTEM, user, { signal, image: sheetImage, schema: REVIEW_SCHEMA });
   const list = Array.isArray(raw.variants) ? raw.variants : [];
   return variants.map((orig, i) => {
@@ -333,20 +341,50 @@ export async function aiReview(settings, { request, concept = '', styleText = ''
   });
 }
 
-/** ローカル検索で参考アイコンを集める（AI呼び出しなし） */
-function referenceIcons(texts, extraIds = [], limit = 24) {
+/**
+ * 部品ごとに候補アイコンを集める（ローカル検索、AI呼び出しなし）
+ * @returns {Array<{label: string, icons: object[]}>}
+ */
+function candidateGroups(keywords, extraTexts = [], extraIds = [], perKeyword = 4, limit = 36) {
   const seen = new Set();
-  const out = [];
-  const push = (icon) => { if (icon && !seen.has(icon.id)) { seen.add(icon.id); out.push(icon); } };
-  extraIds.forEach((id) => push(getIcon(id)));
-  for (const t of texts.filter(Boolean)) {
-    searchIcons(t, { sets: ['lucide', 'tabler'], limit: 6 }).forEach(push);
-    if (out.length >= limit) break;
+  const groups = [];
+  let total = 0;
+  const add = (label, icons) => {
+    const fresh = icons.filter((i) => i && !seen.has(i.id));
+    fresh.forEach((i) => seen.add(i.id));
+    if (fresh.length) { groups.push({ label, icons: fresh }); total += fresh.length; }
+  };
+  add('in the current design', extraIds.map(getIcon));
+  for (const kw of keywords) {
+    if (total >= limit) break;
+    add(kw, [
+      ...searchIcons(kw, { sets: ['lucide', 'tabler'], limit: perKeyword }),
+      ...searchIcons(kw, { sets: ['tabler-filled'], limit: 1 }),
+    ]);
   }
-  return out.slice(0, limit);
+  // キーワードが無い・少ないときは依頼文そのもの（日本語辞書で英語化）でも探す
+  for (const t of extraTexts.filter(Boolean)) {
+    if (total >= limit) break;
+    add(`from "${t.slice(0, 30)}"`, searchIcons(t, { sets: ['lucide', 'tabler'], limit: perKeyword }));
+  }
+  return groups;
 }
 
-const describeRef = (icon) => `${icon.id}${icon.style === 'fill' ? ' [filled]' : ''} (${icon.tags.slice(0, 5).join(', ')}): ${icon.body}`;
+const describeRef = (icon) => `  ${icon.id}${icon.style === 'fill' ? ' [filled]' : ''} (${icon.tags.slice(0, 4).join(', ')}): ${icon.body}`;
+const groupsText = (groups) => (groups.length
+  ? `Candidate library icons (24x24; line icons unless [filled]), grouped by element:\n${groups.map((g) => `- ${g.label}:\n${g.icons.map(describeRef).join('\n')}`).join('\n')}`
+  : '');
+
+/** 依頼から「アイコンで表せる部品」と検索語を出す（AI 1回、仕様が無いときだけ） */
+async function aiParts(settings, request, signal) {
+  try {
+    const raw = await askJSON(settings, PARTS_SYSTEM, `Request: ${request}`, { signal, schema: PARTS_SCHEMA });
+    return (Array.isArray(raw.parts) ? raw.parts : []).flatMap((p) => (Array.isArray(p.keywords) ? p.keywords : [])).map(String).filter(Boolean).slice(0, 14);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    return [];
+  }
+}
 
 /**
  * 仕様の作成（AI 1回）: セット全体のスタイルガイドと、各依頼の解釈
@@ -361,8 +399,8 @@ export async function aiPlan(settings, requests, prefs = '', signal) {
     return {
       request,
       name: String(it.name || request).slice(0, 40),
-      concept: String(it.concept || request).slice(0, 200),
-      keywords: (Array.isArray(it.keywords) ? it.keywords : []).map(String).filter(Boolean).slice(0, 12),
+      concept: String(it.concept || request).slice(0, 300),
+      keywords: (Array.isArray(it.keywords) ? it.keywords : []).map(String).filter(Boolean).slice(0, 14),
       question: String(it.question || '').slice(0, 200),
     };
   });
@@ -370,24 +408,30 @@ export async function aiPlan(settings, requests, prefs = '', signal) {
 }
 
 /**
- * 複数案の生成（AI 1回）。AIはSVGを直接描く（参考アイコンを流用・改変してもよい）
+ * 複数案の生成。AIは収録アイコンと手描きのSVGを組み合わせる
  * @param {object} p
  * @param {string} p.request 依頼文
  * @param {string} [p.concept] 仕様で確定した解釈
- * @param {string[]} [p.keywords] 参考アイコンの検索語
+ * @param {string[]} [p.keywords] アイコンで表す部品の英語検索語（無ければAIで洗い出す）
  * @param {string} [p.styleText] スタイルの指示（スタイルガイドの説明など）
  * @param {object} [p.base] 元にするコンポジション（修正・派生）
  * @param {string} [p.baseImage] base の見た目（PNGのbase64）
  * @param {string} [p.instruction] 修正・派生の指示
  * @param {number} [p.count] 案の数
- * @returns {Promise<{variants: Array<{comp, idea, warnings}>}>}
+ * @returns {Promise<{variants: Array<{comp, idea, warnings}>, keywords: string[]}>}
  */
 export async function aiVariants(settings, p) {
-  const { request, concept = '', keywords = [], styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus, makeSheet = null } = p;
+  const { request, concept = '', styleText = '', base = null, baseImage = null, instruction = '', count = 3, signal, onStatus, makeSheet = null } = p;
+  let keywords = (p.keywords || []).filter(Boolean);
+  if (!keywords.length) {
+    onStatus?.('使えるアイコンを探しています…');
+    keywords = await aiParts(settings, [request, concept, instruction].filter(Boolean).join(' / '), signal);
+  }
   const baseIds = base ? base.layers.filter((l) => l.type === 'icon').map((l) => l.icon) : [];
-  const refs = referenceIcons([request, concept, instruction, ...keywords], baseIds);
+  const groups = candidateGroups(keywords, [instruction, request], baseIds);
+  const refsText = groupsText(groups);
 
-  onStatus?.(`AIが${count > 1 ? `${count}案を` : ''}描いています…`);
+  onStatus?.(`AIが${count > 1 ? `${count}案を` : ''}組み立てています…`);
   let user = `Request: ${request}\n`;
   if (concept && concept !== request) user += `Agreed interpretation (follow this): ${concept}\n`;
   if (styleText) user += `${styleText}\n`;
@@ -395,10 +439,10 @@ export async function aiVariants(settings, p) {
     user += `\nThe attached image shows the current design. Its composition JSON:\n${JSON.stringify(compactComposition(base))}\n`;
     user += instruction
       ? `Modify it according to this instruction (keep everything that is not asked to change): ${instruction}\n`
-      : 'Create variations that stay close to this design direction (alternative details, metaphor, badge or layout).\n';
+      : 'Create variations that stay close to this design direction (alternative details, icon choices, badge or layout).\n';
   }
   user += `\nCreate exactly ${count} variant${count > 1 ? 's' : ''}.\n`;
-  if (refs.length) user += `\nReference icons (24x24 line icons unless [filled]; id (tags): svg):\n${refs.map(describeRef).join('\n')}`;
+  if (refsText) user += `\n${refsText}`;
 
   const raw = await askJSON(settings, VARIANTS_SYSTEM, user, { signal, image: base ? baseImage : null, schema: VARIANTS_SCHEMA });
   const list = Array.isArray(raw.variants) ? raw.variants : [raw];
@@ -415,16 +459,18 @@ export async function aiVariants(settings, p) {
     try {
       const sheetImage = await makeSheet(variants.map((v) => v.comp));
       if (sheetImage) {
-        const reviewed = await aiReview(settings, { request, concept: [concept, instruction].filter(Boolean).join(' / '), styleText, variants, sheetImage, signal });
-        return { variants: reviewed, reviewed: true };
+        const reviewed = await aiReview(settings, {
+          request, concept: [concept, instruction].filter(Boolean).join(' / '), styleText, variants, sheetImage, refsText, signal,
+        });
+        return { variants: reviewed, reviewed: true, keywords };
       }
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       // 見直しに失敗しても最初の案は返す
-      return { variants, reviewed: false, reviewError: e.message };
+      return { variants, reviewed: false, reviewError: e.message, keywords };
     }
   }
-  return { variants, reviewed: false };
+  return { variants, reviewed: false, keywords };
 }
 
 /** 並列数を制限して実行 */
